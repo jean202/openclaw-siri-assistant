@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenClaw Siri Shortcut Setup Guide</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.6;
+    color: #1d1d1f;
+    background: #f5f5f7;
+    padding: 20px;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  h2 { font-size: 20px; margin: 32px 0 12px; color: #1d1d1f; }
+  h3 { font-size: 16px; margin: 20px 0 8px; color: #6e6e73; }
+  p, li { font-size: 15px; color: #424245; }
+  .header {
+    text-align: center;
+    padding: 32px 0 24px;
+    border-bottom: 1px solid #d2d2d7;
+    margin-bottom: 24px;
+  }
+  .header .icon { font-size: 48px; margin-bottom: 12px; }
+  .header .subtitle { color: #6e6e73; font-size: 15px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    margin: 16px 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .step {
+    display: flex;
+    gap: 14px;
+    padding: 16px 0;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .step:last-child { border-bottom: none; }
+  .step-num {
+    flex-shrink: 0;
+    width: 28px; height: 28px;
+    background: #007aff;
+    color: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .step-content { flex: 1; }
+  .step-content strong { display: block; margin-bottom: 4px; color: #1d1d1f; }
+  .step-content p { font-size: 14px; }
+  .config-box {
+    background: #f5f5f7;
+    border-radius: 8px;
+    padding: 14px;
+    margin: 12px 0;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    word-break: break-all;
+    color: #1d1d1f;
+  }
+  .config-box .label {
+    font-family: -apple-system, sans-serif;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #6e6e73;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .method-tabs {
+    display: flex;
+    gap: 8px;
+    margin: 16px 0;
+  }
+  .method-tab {
+    flex: 1;
+    text-align: center;
+    padding: 10px;
+    background: #e8e8ed;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #424245;
+  }
+  .method-tab.recommended {
+    background: #007aff;
+    color: #fff;
+  }
+  .warning {
+    background: #fff3cd;
+    border-left: 4px solid #ffc107;
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .tip {
+    background: #d1ecf1;
+    border-left: 4px solid #17a2b8;
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    margin: 12px 0;
+  }
+  td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+  td:first-child { font-weight: 600; width: 40%; color: #1d1d1f; }
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 16px 0;
+    font-size: 14px;
+  }
+  .flow .arrow { color: #6e6e73; }
+  .flow .block {
+    background: #e8e8ed;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-weight: 500;
+  }
+  .flow .block.active { background: #007aff; color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="icon">&#x1F99E;</div>
+  <h1>OpenClaw Siri Assistant</h1>
+  <p class="subtitle">iPhone Siri Shortcut Setup Guide</p>
+</div>
+
+<!-- Overview -->
+<div class="card">
+  <h2>How It Works</h2>
+  <div class="flow">
+    <span class="block active">Siri</span>
+    <span class="arrow">&rarr;</span>
+    <span class="block">Shortcut</span>
+    <span class="arrow">&rarr;</span>
+    <span class="block">Tunnel</span>
+    <span class="arrow">&rarr;</span>
+    <span class="block">OpenClaw</span>
+    <span class="arrow">&rarr;</span>
+    <span class="block active">Voice Reply</span>
+  </div>
+  <p>Siri voice input is sent to your local OpenClaw AI agent via a Cloudflare tunnel, and the response is spoken back.</p>
+</div>
+
+<!-- Setup Method -->
+<div class="card">
+  <h2>Setup Method</h2>
+  <div class="method-tabs">
+    <div class="method-tab recommended">Auto Generate<br><small>(recommended)</small></div>
+    <div class="method-tab">Manual Setup<br><small>(fallback)</small></div>
+  </div>
+</div>
+
+<!-- Method A: Auto -->
+<div class="card">
+  <h2>A. Auto Generate (Recommended)</h2>
+  <p>Run this on your Mac where the bridge is running:</p>
+  <div class="config-box">
+    <div class="label">Terminal Command</div>
+    node generate-shortcut.js
+  </div>
+  <p>This creates <strong>AskOpenClaw.shortcut</strong> with your current URL and secret baked in.</p>
+
+  <h3>Transfer to iPhone</h3>
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-content">
+      <strong>AirDrop (fastest)</strong>
+      <p>Right-click <code>AskOpenClaw.shortcut</code> &rarr; Share &rarr; AirDrop &rarr; your iPhone</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-content">
+      <strong>Tap to import</strong>
+      <p>iPhone will open the Shortcuts app. Tap <strong>Add Shortcut</strong>.</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-content">
+      <strong>Say "Hey Siri, Ask OpenClaw"</strong>
+      <p>Siri will ask what you want to know, then speak the AI response.</p>
+    </div>
+  </div>
+
+  <div class="warning">
+    Tunnel URL changes on every restart. Re-run <code>node generate-shortcut.js</code> and re-import after restarting the bridge.
+  </div>
+</div>
+
+<!-- Method B: Manual -->
+<div class="card">
+  <h2>B. Manual Setup</h2>
+  <p>Create the shortcut directly on your iPhone.</p>
+
+  <h3>Your Configuration</h3>
+  <div class="config-box">
+    <div class="label">Bridge URL</div>
+    <span id="url">Run <code>cat .tunnel-url</code> on Mac to get this</span>
+  </div>
+  <div class="config-box">
+    <div class="label">API Secret</div>
+    <span id="secret">Run <code>cat .secret</code> on Mac to get this</span>
+  </div>
+
+  <h3>Step-by-Step</h3>
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-content">
+      <strong>Open Shortcuts App</strong>
+      <p>Tap <strong>+</strong> to create a new shortcut. Name it <strong>"Ask OpenClaw"</strong>.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-content">
+      <strong>Add Action: Ask for Input</strong>
+      <p>Search "Ask for Input". Set prompt to:<br><code>What would you like to ask?</code><br>Input Type: <strong>Text</strong></p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-content">
+      <strong>Add Action: Get Contents of URL</strong>
+      <table>
+        <tr><td>URL</td><td><code>{your tunnel URL}/ask</code></td></tr>
+        <tr><td>Method</td><td>POST</td></tr>
+        <tr><td>Body Type</td><td>JSON</td></tr>
+      </table>
+      <p>Add these JSON fields:</p>
+      <table>
+        <tr><td>secret</td><td><code>{your API secret}</code></td></tr>
+        <tr><td>message</td><td><em>Provided Input</em> (tap to select the variable from step 2)</td></tr>
+        <tr><td>session_id</td><td><code>siri-iphone</code></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-content">
+      <strong>Add Action: Get Dictionary Value</strong>
+      <p>Key: <code>reply</code><br>From: <em>Contents of URL</em> (auto-selected)</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">5</div>
+    <div class="step-content">
+      <strong>Add Action: Speak Text</strong>
+      <p>Input: <em>Dictionary Value</em> (auto-selected)<br>Wait Until Finished: <strong>ON</strong></p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">6</div>
+    <div class="step-content">
+      <strong>Done!</strong>
+      <p>Tap the play button to test, then try "Hey Siri, Ask OpenClaw".</p>
+    </div>
+  </div>
+</div>
+
+<!-- Troubleshooting -->
+<div class="card">
+  <h2>Troubleshooting</h2>
+
+  <div class="step">
+    <div class="step-num">?</div>
+    <div class="step-content">
+      <strong>"The request timed out"</strong>
+      <p>Bridge or tunnel may be down. Check Mac: <code>./check-url.sh</code></p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">?</div>
+    <div class="step-content">
+      <strong>"Invalid secret"</strong>
+      <p>Secret mismatch. Re-generate shortcut or update the secret value manually.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">?</div>
+    <div class="step-content">
+      <strong>Siri says nothing / empty response</strong>
+      <p>OpenClaw may not be installed or in PATH. Check logs: <code>cat logs/requests.log</code></p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">?</div>
+    <div class="step-content">
+      <strong>Tunnel URL changed</strong>
+      <p>Quick tunnels get a new URL on each restart. Re-run <code>node generate-shortcut.js</code> and re-import.</p>
+    </div>
+  </div>
+
+  <div class="tip">
+    <strong>Tip:</strong> For a permanent URL, set up a <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/">Named Tunnel</a> with a custom domain. Then you only need to set up the shortcut once.
+  </div>
+</div>
+
+<!-- Quick Ref -->
+<div class="card">
+  <h2>API Quick Reference</h2>
+  <div class="config-box">
+    <div class="label">Endpoint</div>
+    POST {tunnel_url}/ask
+  </div>
+  <div class="config-box">
+    <div class="label">Request Body (JSON)</div>
+{
+  "secret": "your-api-secret",
+  "message": "your question here",
+  "session_id": "siri-iphone"
+}
+  </div>
+  <div class="config-box">
+    <div class="label">Response (JSON)</div>
+{
+  "reply": "AI response text"
+}
+  </div>
+</div>
+
+<p style="text-align:center; color:#6e6e73; font-size:12px; margin:32px 0 16px;">
+  OpenClaw Siri Assistant &mdash; Setup Guide
+</p>
+
+</body>
+</html>

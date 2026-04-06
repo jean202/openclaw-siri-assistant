@@ -1,0 +1,17 @@
+# Secrets & runtime state
+.secret
+.tunnel-url
+.env
+
+# Generated files
+*.shortcut
+*.plist
+
+# Logs
+logs/
+
+# Dependencies
+node_modules/
+
+# OS
+.DS_Store

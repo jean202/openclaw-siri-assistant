@@ -1,0 +1,15 @@
+{
+  "name": "openclaw-siri-assistant",
+  "version": "1.0.0",
+  "description": "OpenClaw + iPhone Siri integration via cloudflared tunnel",
+  "main": "server.js",
+  "scripts": {
+    "start": "bash siri-bridge.sh",
+    "server": "node server.js",
+    "url": "bash check-url.sh"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
