@@ -6,6 +6,8 @@
 
 set -e
 
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LABEL="com.openclaw.siri-bridge"
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
@@ -94,6 +96,8 @@ echo "Plist written: $PLIST"
 echo ""
 
 # --- Load & start ---
+launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+sleep 1
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
 sleep 2
