@@ -27,6 +27,7 @@ try {
 const askUrl = `${tunnelUrl}/ask`;
 
 // --- UUIDs for action references ---
+const getDeviceUUID = crypto.randomUUID().toUpperCase();
 const askInputUUID = crypto.randomUUID().toUpperCase();
 const getUrlUUID = crypto.randomUUID().toUpperCase();
 const getValueUUID = crypto.randomUUID().toUpperCase();
@@ -96,6 +97,19 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
   <key>WFWorkflowActions</key>
   <array>
 
+    <!-- Action 0: Get Device Name (for session identification) -->
+    <dict>
+      <key>WFWorkflowActionIdentifier</key>
+      <string>is.workflow.actions.getdevicedetails</string>
+      <key>WFWorkflowActionParameters</key>
+      <dict>
+        <key>UUID</key>
+        <string>${getDeviceUUID}</string>
+        <key>WFDeviceDetail</key>
+        <string>Device Name</string>
+      </dict>
+    </dict>
+
     <!-- Action 1: Ask for Input (voice via Siri) -->
     <dict>
       <key>WFWorkflowActionIdentifier</key>
@@ -135,7 +149,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
             <array>
               ${jsonField("secret", textToken(secret))}
               ${jsonField("message", textTokenWithVar("Provided Input", askInputUUID))}
-              ${jsonField("session_id", textToken("siri-iphone"))}
+              ${jsonField("session_id", textTokenWithVar("Device Details", getDeviceUUID))}
             </array>
           </dict>
         </dict>

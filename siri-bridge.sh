@@ -19,9 +19,17 @@ for cmd in node cloudflared openclaw; do
 done
 [ $missing -eq 1 ] && exit 1
 
+# Load .env if present
+[ -f "$DIR/.env" ] && set -a && . "$DIR/.env" && set +a
+
 export PORT="${PORT:-3456}"
-export API_SECRET="$(cat .secret)"
+export API_SECRET="${API_SECRET:-$(cat .secret 2>/dev/null)}"
 export TIMEOUT_SEC="${TIMEOUT_SEC:-120}"
+
+if [ -z "$API_SECRET" ]; then
+  echo "[$(date)] ERROR: No API_SECRET set and .secret file not found" >> "$LOG_EARLY"
+  exit 1
+fi
 
 TUNNEL_URL_FILE="$DIR/.tunnel-url"
 LOG_FILE="$DIR/logs/bridge.log"
@@ -29,6 +37,7 @@ TUNNEL_LOG="$DIR/logs/tunnel.log"
 TUNNEL_CHECK_INTERVAL=30
 mkdir -p "$DIR/logs"
 
+OLD_TUNNEL_URL=$(cat "$TUNNEL_URL_FILE" 2>/dev/null || echo "")
 SERVER_PID=""
 TUNNEL_PID=""
 
@@ -42,21 +51,50 @@ trap cleanup INT TERM
 start_tunnel() {
   [ -n "$TUNNEL_PID" ] && kill $TUNNEL_PID 2>/dev/null
   > "$TUNNEL_LOG"
-  cloudflared tunnel --url http://127.0.0.1:$PORT > "$TUNNEL_LOG" 2>&1 &
-  TUNNEL_PID=$!
-  echo "[$(date)] Tunnel process started (PID: $TUNNEL_PID)" >> "$LOG_FILE"
 
-  for i in $(seq 1 30); do
-    URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
-    if [ -n "$URL" ]; then
-      echo "$URL" > "$TUNNEL_URL_FILE"
-      echo "[$(date)] Tunnel URL: $URL" >> "$LOG_FILE"
+  if [ -n "$TUNNEL_NAME" ]; then
+    cloudflared tunnel run "$TUNNEL_NAME" > "$TUNNEL_LOG" 2>&1 &
+    TUNNEL_PID=$!
+    echo "[$(date)] Named tunnel '$TUNNEL_NAME' started (PID: $TUNNEL_PID)" >> "$LOG_FILE"
+
+    if [ -n "$TUNNEL_HOSTNAME" ]; then
+      echo "https://$TUNNEL_HOSTNAME" > "$TUNNEL_URL_FILE"
+      echo "[$(date)] Tunnel URL: https://$TUNNEL_HOSTNAME (fixed)" >> "$LOG_FILE"
       return 0
     fi
-    sleep 1
-  done
+    for i in $(seq 1 30); do
+      if grep -q 'Registered tunnel connection' "$TUNNEL_LOG" 2>/dev/null; then
+        echo "[$(date)] Named tunnel connected" >> "$LOG_FILE"
+        return 0
+      fi
+      sleep 1
+    done
+  else
+    cloudflared tunnel --url http://127.0.0.1:$PORT > "$TUNNEL_LOG" 2>&1 &
+    TUNNEL_PID=$!
+    echo "[$(date)] Ephemeral tunnel started (PID: $TUNNEL_PID)" >> "$LOG_FILE"
+
+    for i in $(seq 1 30); do
+      URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
+      if [ -n "$URL" ]; then
+        echo "$URL" > "$TUNNEL_URL_FILE"
+        echo "[$(date)] Tunnel URL: $URL" >> "$LOG_FILE"
+        return 0
+      fi
+      sleep 1
+    done
+  fi
   echo "[$(date)] WARNING: Tunnel URL not detected within 30s" >> "$LOG_FILE"
   return 1
+}
+
+regenerate_shortcut() {
+  NEW_URL=$(cat "$TUNNEL_URL_FILE" 2>/dev/null || echo "")
+  if [ -n "$NEW_URL" ] && [ "$NEW_URL" != "$OLD_TUNNEL_URL" ]; then
+    echo "[$(date)] Tunnel URL changed — regenerating shortcut..." >> "$LOG_FILE"
+    node "$DIR/generate-shortcut.js" >> "$LOG_FILE" 2>&1
+    OLD_TUNNEL_URL="$NEW_URL"
+  fi
 }
 
 # Start HTTP server
@@ -66,6 +104,7 @@ sleep 2
 
 # Start cloudflared tunnel
 start_tunnel
+regenerate_shortcut
 
 # Monitor loop: restart tunnel or server if they die
 while true; do
@@ -80,6 +119,7 @@ while true; do
     echo "[$(date)] Tunnel process died, restarting..." >> "$LOG_FILE"
     sleep 3
     start_tunnel
+    regenerate_shortcut
   fi
 
   sleep $TUNNEL_CHECK_INTERVAL

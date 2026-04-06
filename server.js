@@ -4,6 +4,21 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
+// --- Load .env (no external deps) ---
+const envPath = path.join(__dirname, ".env");
+try {
+  const envContent = fs.readFileSync(envPath, "utf8");
+  for (const line of envContent.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    const val = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, "");
+    if (!process.env[key]) process.env[key] = val;
+  }
+} catch {}
+
 // --- Config ---
 const PORT = process.env.PORT || 3456;
 const API_SECRET = process.env.API_SECRET || crypto.randomBytes(24).toString("hex");
@@ -24,6 +39,34 @@ function log(entry) {
   const line = `[${new Date().toISOString()}] ${JSON.stringify(entry)}\n`;
   fs.appendFile(REQ_LOG, line, () => {});
 }
+
+// --- Session Management ---
+const SESSION_TIMEOUT_MIN = Number(process.env.SESSION_TIMEOUT_MIN) || 30;
+const sessions = new Map(); // sessionId -> { lastActive, messageCount }
+
+function getOrCreateSession(sessionId) {
+  const now = Date.now();
+  let session = sessions.get(sessionId);
+  if (!session || (now - session.lastActive) > SESSION_TIMEOUT_MIN * 60 * 1000) {
+    // New session or expired — generate a fresh session ID with timestamp
+    const freshId = `${sessionId}-${Date.now().toString(36)}`;
+    session = { id: freshId, lastActive: now, messageCount: 0 };
+    sessions.set(sessionId, session);
+  }
+  session.lastActive = now;
+  session.messageCount++;
+  return session;
+}
+
+// Cleanup expired sessions every 10 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, s] of sessions) {
+    if ((now - s.lastActive) > SESSION_TIMEOUT_MIN * 60 * 1000) {
+      sessions.delete(key);
+    }
+  }
+}, 10 * 60 * 1000);
 
 // --- Helpers ---
 function readBody(req) {
@@ -103,13 +146,15 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: "message is required" });
       }
 
-      sessionId = body.session_id || "siri-default";
-      log({ event: "ask", session_id: sessionId, message_length: message.length });
+      const deviceId = body.session_id || body.device_id || "siri-default";
+      const session = getOrCreateSession(deviceId);
+      sessionId = session.id;
+      log({ event: "ask", device_id: deviceId, session_id: sessionId, message_count: session.messageCount, message_length: message.length });
 
       const reply = await askOpenClaw(message, sessionId);
       const elapsed = Date.now() - startTime;
-      log({ event: "reply", session_id: sessionId, elapsed_ms: elapsed, reply_length: reply.length });
-      return json(res, 200, { reply });
+      log({ event: "reply", device_id: deviceId, session_id: sessionId, elapsed_ms: elapsed, reply_length: reply.length });
+      return json(res, 200, { reply, session_id: sessionId });
     } catch (e) {
       const elapsed = Date.now() - startTime;
       log({ event: "error", session_id: sessionId, elapsed_ms: elapsed, error: e.message });
