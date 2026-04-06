@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Generates a Siri Shortcut (.shortcut) file for OpenClaw Siri Assistant
+// Features: error handling with voice feedback, follow-up conversation loop
 // Usage: node generate-shortcut.js
 
 const fs = require("node:fs");
@@ -26,14 +27,22 @@ try {
 
 const askUrl = `${tunnelUrl}/ask`;
 
-// --- UUIDs for action references ---
-const getDeviceUUID = crypto.randomUUID().toUpperCase();
-const askInputUUID = crypto.randomUUID().toUpperCase();
-const getUrlUUID = crypto.randomUUID().toUpperCase();
-const getValueUUID = crypto.randomUUID().toUpperCase();
-const speakUUID = crypto.randomUUID().toUpperCase();
+// --- UUIDs ---
+const uuid = () => crypto.randomUUID().toUpperCase();
+const getDeviceUUID = uuid();
+const repeatGroupUUID = uuid();
+const askInputUUID = uuid();
+const getUrlUUID = uuid();
+const getValueUUID = uuid();
+const ifReplyGroupUUID = uuid();
+const speakReplyUUID = uuid();
+const speakErrorUUID = uuid();
 
-// --- Helper: text token (plain string) ---
+// --- XML helpers ---
+function escapeXml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function textToken(str) {
   return `<dict>
               <key>WFSerializationType</key>
@@ -48,7 +57,6 @@ function textToken(str) {
             </dict>`;
 }
 
-// --- Helper: text token with variable reference ---
 function textTokenWithVar(outputName, outputUUID) {
   return `<dict>
               <key>WFSerializationType</key>
@@ -73,7 +81,6 @@ function textTokenWithVar(outputName, outputUUID) {
             </dict>`;
 }
 
-// --- Helper: JSON body field ---
 function jsonField(key, valueXml) {
   return `<dict>
                 <key>WFItemType</key>
@@ -85,11 +92,33 @@ function jsonField(key, valueXml) {
               </dict>`;
 }
 
-function escapeXml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function actionRef(outputName, outputUUID) {
+  return `<dict>
+        <key>Value</key>
+        <dict>
+          <key>OutputName</key>
+          <string>${escapeXml(outputName)}</string>
+          <key>OutputUUID</key>
+          <string>${outputUUID}</string>
+          <key>Type</key>
+          <string>ActionOutput</string>
+        </dict>
+        <key>WFSerializationType</key>
+        <string>WFActionOutputVariable</string>
+      </dict>`;
 }
 
 // --- Build Shortcut plist ---
+// Flow:
+//   0. Get Device Name (session ID)
+//   1. Repeat 20 times (conversation loop)
+//     2. Ask for Input
+//     3. POST /ask
+//     4. Get "reply" from JSON
+//     5. If reply has value → Speak reply
+//     6. Otherwise → Speak error message
+//   7. End Repeat
+
 const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -97,7 +126,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
   <key>WFWorkflowActions</key>
   <array>
 
-    <!-- Action 0: Get Device Name (for session identification) -->
+    <!-- Get Device Name -->
     <dict>
       <key>WFWorkflowActionIdentifier</key>
       <string>is.workflow.actions.getdevicedetails</string>
@@ -110,7 +139,22 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
       </dict>
     </dict>
 
-    <!-- Action 1: Ask for Input (voice via Siri) -->
+    <!-- Repeat Start (conversation loop, max 20 turns) -->
+    <dict>
+      <key>WFWorkflowActionIdentifier</key>
+      <string>is.workflow.actions.repeat.count</string>
+      <key>WFWorkflowActionParameters</key>
+      <dict>
+        <key>GroupingIdentifier</key>
+        <string>${repeatGroupUUID}</string>
+        <key>WFControlFlowMode</key>
+        <integer>0</integer>
+        <key>WFRepeatCount</key>
+        <integer>20</integer>
+      </dict>
+    </dict>
+
+    <!-- Ask for Input -->
     <dict>
       <key>WFWorkflowActionIdentifier</key>
       <string>is.workflow.actions.ask</string>
@@ -125,7 +169,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
       </dict>
     </dict>
 
-    <!-- Action 2: POST to /ask -->
+    <!-- POST to /ask -->
     <dict>
       <key>WFWorkflowActionIdentifier</key>
       <string>is.workflow.actions.downloadurl</string>
@@ -156,7 +200,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
       </dict>
     </dict>
 
-    <!-- Action 3: Get "reply" from response -->
+    <!-- Get "reply" from response dictionary -->
     <dict>
       <key>WFWorkflowActionIdentifier</key>
       <string>is.workflow.actions.getvalueforkey</string>
@@ -169,16 +213,91 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
       </dict>
     </dict>
 
-    <!-- Action 4: Speak the reply -->
+    <!-- If: reply has any value -->
+    <dict>
+      <key>WFWorkflowActionIdentifier</key>
+      <string>is.workflow.actions.conditional</string>
+      <key>WFWorkflowActionParameters</key>
+      <dict>
+        <key>GroupingIdentifier</key>
+        <string>${ifReplyGroupUUID}</string>
+        <key>WFControlFlowMode</key>
+        <integer>0</integer>
+        <key>WFCondition</key>
+        <integer>100</integer>
+        <key>WFConditionalIfTrueActions</key>
+        <array/>
+        <key>WFInput</key>
+        ${actionRef("Dictionary Value", getValueUUID)}
+      </dict>
+    </dict>
+
+    <!-- Speak error (reply is empty/missing) -->
     <dict>
       <key>WFWorkflowActionIdentifier</key>
       <string>is.workflow.actions.speaktext</string>
       <key>WFWorkflowActionParameters</key>
       <dict>
         <key>UUID</key>
-        <string>${speakUUID}</string>
+        <string>${speakErrorUUID}</string>
         <key>WFSpeakTextWait</key>
         <true/>
+        <key>WFText</key>
+        ${textToken("Sorry, I couldn't get a response from the server. Please try again later.")}
+      </dict>
+    </dict>
+
+    <!-- Otherwise (reply exists) — Speak reply -->
+    <dict>
+      <key>WFWorkflowActionIdentifier</key>
+      <string>is.workflow.actions.conditional</string>
+      <key>WFWorkflowActionParameters</key>
+      <dict>
+        <key>GroupingIdentifier</key>
+        <string>${ifReplyGroupUUID}</string>
+        <key>WFControlFlowMode</key>
+        <integer>1</integer>
+      </dict>
+    </dict>
+
+    <!-- Speak the reply -->
+    <dict>
+      <key>WFWorkflowActionIdentifier</key>
+      <string>is.workflow.actions.speaktext</string>
+      <key>WFWorkflowActionParameters</key>
+      <dict>
+        <key>UUID</key>
+        <string>${speakReplyUUID}</string>
+        <key>WFSpeakTextWait</key>
+        <true/>
+        <key>WFText</key>
+        ${textTokenWithVar("Dictionary Value", getValueUUID)}
+      </dict>
+    </dict>
+
+    <!-- End If -->
+    <dict>
+      <key>WFWorkflowActionIdentifier</key>
+      <string>is.workflow.actions.conditional</string>
+      <key>WFWorkflowActionParameters</key>
+      <dict>
+        <key>GroupingIdentifier</key>
+        <string>${ifReplyGroupUUID}</string>
+        <key>WFControlFlowMode</key>
+        <integer>2</integer>
+      </dict>
+    </dict>
+
+    <!-- End Repeat -->
+    <dict>
+      <key>WFWorkflowActionIdentifier</key>
+      <string>is.workflow.actions.repeat.count</string>
+      <key>WFWorkflowActionParameters</key>
+      <dict>
+        <key>GroupingIdentifier</key>
+        <string>${repeatGroupUUID}</string>
+        <key>WFControlFlowMode</key>
+        <integer>2</integer>
       </dict>
     </dict>
 
@@ -225,16 +344,22 @@ try {
   execSync(`plutil -convert binary1 -o "${shortcutPath}" "${xmlPath}"`);
   fs.unlinkSync(xmlPath);
 } catch (e) {
-  // Fallback: rename XML as .shortcut (iOS can sometimes handle XML plist too)
   fs.renameSync(xmlPath, shortcutPath);
-  console.warn("⚠️  plutil conversion failed, saved as XML plist (may still work)\n");
+  console.warn("plutil conversion failed, saved as XML plist (may still work)\n");
 }
 
-console.log("✅ Generated: AskOpenClaw.shortcut\n");
-console.log("📱 Transfer to iPhone:");
-console.log("   • AirDrop  — Right-click file → Share → AirDrop");
-console.log("   • iCloud   — Copy to iCloud Drive, tap on iPhone");
-console.log("   • Email    — Send as attachment, tap to open\n");
-console.log("🗣️  Usage: \"Hey Siri, Ask OpenClaw\"\n");
-console.log(`🔗 Tunnel URL: ${tunnelUrl}`);
-console.log("   ⚠️  URL changes on restart — re-run this script after restart.\n");
+console.log("Generated: AskOpenClaw.shortcut\n");
+console.log("Transfer to iPhone:");
+console.log("  AirDrop  — Right-click file > Share > AirDrop");
+console.log("  iCloud   — Copy to iCloud Drive, tap on iPhone\n");
+console.log(`Usage: "Hey Siri, Ask OpenClaw"\n`);
+console.log("Features:");
+console.log("  - Follow-up conversation (up to 20 turns per session)");
+console.log("  - Error handling with voice feedback");
+console.log("  - Device-based session tracking\n");
+console.log(`Tunnel URL: ${tunnelUrl}`);
+if (!tunnelUrl.includes("trycloudflare")) {
+  console.log("  (Fixed URL — no need to regenerate)\n");
+} else {
+  console.log("  URL changes on restart — shortcut auto-regenerates.\n");
+}

@@ -140,10 +140,15 @@ echo "Endpoint: $(cat "$TUNNEL_URL_FILE" 2>/dev/null)/ask"
 echo ""
 echo "Press Ctrl+C to stop everything."
 
-# Monitor loop: restart tunnel if it dies
+notify() {
+  osascript -e "display notification \"$2\" with title \"$1\"" 2>/dev/null || true
+}
+
+# Monitor loop: restart processes if they die, notify on failure
 while true; do
   if ! kill -0 $SERVER_PID 2>/dev/null; then
     echo "[$(date)] Server died, restarting..."
+    notify "OpenClaw Siri Bridge" "Server crashed — restarting..."
     node server.js &
     SERVER_PID=$!
     sleep 2
@@ -151,6 +156,7 @@ while true; do
 
   if ! kill -0 $TUNNEL_PID 2>/dev/null; then
     echo "[$(date)] Tunnel died, restarting..."
+    notify "OpenClaw Siri Bridge" "Tunnel crashed — restarting..."
     sleep 3
     start_tunnel
     regenerate_shortcut

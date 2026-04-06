@@ -137,13 +137,13 @@ const server = http.createServer(async (req, res) => {
       // Auth check
       if (body.secret !== API_SECRET) {
         log({ event: "auth_fail", session_id: sessionId });
-        return json(res, 401, { error: "Invalid secret" });
+        return json(res, 401, { error: "Invalid secret", reply: "Authentication failed." });
       }
 
       const message = body.message?.trim();
       if (!message) {
         log({ event: "bad_request", reason: "empty message", session_id: sessionId });
-        return json(res, 400, { error: "message is required" });
+        return json(res, 400, { error: "message is required", reply: "No message received." });
       }
 
       const deviceId = body.session_id || body.device_id || "siri-default";
@@ -158,7 +158,7 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       const elapsed = Date.now() - startTime;
       log({ event: "error", session_id: sessionId, elapsed_ms: elapsed, error: e.message });
-      return json(res, 500, { error: e.message });
+      return json(res, 500, { error: e.message, reply: "An error occurred. Please try again." });
     }
   }
 

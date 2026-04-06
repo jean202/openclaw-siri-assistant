@@ -106,20 +106,37 @@ sleep 2
 start_tunnel
 regenerate_shortcut
 
-# Monitor loop: restart tunnel or server if they die
+notify() {
+  local title="$1" msg="$2"
+  osascript -e "display notification \"$msg\" with title \"$title\"" 2>/dev/null || true
+}
+
+# Monitor loop: restart processes if they die, notify on failure
 while true; do
   if ! kill -0 $SERVER_PID 2>/dev/null; then
     echo "[$(date)] Server process died, restarting..." >> "$LOG_FILE"
+    notify "OpenClaw Siri Bridge" "Server crashed — restarting..."
     node "$DIR/server.js" >> "$LOG_FILE" 2>&1 &
     SERVER_PID=$!
     sleep 2
+    if kill -0 $SERVER_PID 2>/dev/null; then
+      notify "OpenClaw Siri Bridge" "Server restarted successfully."
+    else
+      notify "OpenClaw Siri Bridge" "Server failed to restart! Check logs."
+    fi
   fi
 
   if ! kill -0 $TUNNEL_PID 2>/dev/null; then
     echo "[$(date)] Tunnel process died, restarting..." >> "$LOG_FILE"
+    notify "OpenClaw Siri Bridge" "Tunnel crashed — restarting..."
     sleep 3
     start_tunnel
     regenerate_shortcut
+    if kill -0 $TUNNEL_PID 2>/dev/null; then
+      notify "OpenClaw Siri Bridge" "Tunnel restarted. New URL: $(cat "$TUNNEL_URL_FILE" 2>/dev/null)"
+    else
+      notify "OpenClaw Siri Bridge" "Tunnel failed to restart! Check logs."
+    fi
   fi
 
   sleep $TUNNEL_CHECK_INTERVAL
