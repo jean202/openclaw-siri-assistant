@@ -286,30 +286,30 @@ function getDashboardHTML() {
 <div id="app" style="display:none">
 
 <div class="quota-card">
-  <div class="label">Codex Quota (ChatGPT Pro)</div>
+  <div class="label">Codex Quota (남은 사용 한도)</div>
   <div class="value" id="quota"></div>
 </div>
 
 <div class="grid">
-  <div class="card"><div class="label">Total Requests</div><div class="value" id="totalReqs"></div></div>
-  <div class="card"><div class="label">Total Tokens</div><div class="value" id="totalTokens"></div><div class="sub" id="tokenBreakdown"></div></div>
-  <div class="card"><div class="label">Today Requests</div><div class="value" id="todayReqs"></div></div>
-  <div class="card"><div class="label">Today Tokens</div><div class="value" id="todayTokens"></div></div>
-  <div class="card"><div class="label">Avg Response</div><div class="value" id="avgTime"></div><div class="sub">ms</div></div>
-  <div class="card"><div class="label">Model</div><div class="value" id="model" style="font-size:1em"></div></div>
+  <div class="card"><div class="label">Total Requests (총 요청 수)</div><div class="value" id="totalReqs"></div></div>
+  <div class="card"><div class="label">Total Tokens (총 토큰 사용량)</div><div class="value" id="totalTokens"></div><div class="sub" id="tokenBreakdown"></div></div>
+  <div class="card"><div class="label">Today Requests (오늘 요청 수)</div><div class="value" id="todayReqs"></div></div>
+  <div class="card"><div class="label">Today Tokens (오늘 토큰)</div><div class="value" id="todayTokens"></div></div>
+  <div class="card"><div class="label">Avg Response (평균 응답 시간)</div><div class="value" id="avgTime"></div><div class="sub">ms (밀리초)</div></div>
+  <div class="card"><div class="label">Model (��용 중인 모델)</div><div class="value" id="model" style="font-size:1em"></div></div>
 </div>
 
-<h2>Daily Token Usage (last 14 days)</h2>
+<h2>Daily Token Usage (최근 14일 토큰 사용 추이)</h2>
 <div class="chart" id="dailyChart"></div>
 <div class="legend">
-  <span class="l-input">Input</span>
-  <span class="l-output">Output</span>
-  <span class="l-cache">Cache Read</span>
+  <span class="l-input">Input (보낸 토큰)</span>
+  <span class="l-output">Output (받은 토큰)</span>
+  <span class="l-cache">Cache Read (캐시 재사용)</span>
 </div>
 
-<h2>Recent Requests</h2>
+<h2>Recent Requests (최근 요청 내역)</h2>
 <table>
-  <thead><tr><th>Time</th><th>Device</th><th>In Tokens</th><th>Out Tokens</th><th>Cache</th><th>Response</th></tr></thead>
+  <thead><tr><th>Time (시각)</th><th>Device (기기)</th><th>In Tokens (보낸)</th><th>Out Tokens (받은)</th><th>Cache (캐시)</th><th>Response (응답 시간)</th></tr></thead>
   <tbody id="recentTable"></tbody>
 </table>
 </div>
@@ -333,7 +333,7 @@ async function load() {
     const totalReqs = Object.values(d.daily||{}).reduce((s,v)=>s+v.requests,0);
     document.getElementById('totalReqs').textContent = fmt(totalReqs);
     document.getElementById('totalTokens').textContent = fmt(t.total||0);
-    document.getElementById('tokenBreakdown').textContent = 'In: '+fmt(t.input||0)+' / Out: '+fmt(t.output||0)+' / Cache: '+fmt(t.cacheRead||0);
+    document.getElementById('tokenBreakdown').textContent = 'In(��낸): '+fmt(t.input||0)+' / Out(받은): '+fmt(t.output||0)+' / Cache(캐시): '+fmt(t.cacheRead||0);
 
     // Today
     const today = new Date().toISOString().slice(0,10);
