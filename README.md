@@ -35,6 +35,11 @@ iPhone Siri → Shortcut → cloudflared 터널 → localhost:3456 → OpenClaw 
 # 3. iPhone에서 "Hey Siri, Ask OpenClaw"
 ```
 
+```bash
+# smoke test 실행
+npm test
+```
+
 ## 설치 & 설정
 
 ### 기본 설정
@@ -51,6 +56,7 @@ cp .env.example .env
 | `PORT` | `3456` | HTTP 서버 포트 |
 | `API_SECRET` | 자동 생성 | API 인증 키 (.secret에 저장) |
 | `TIMEOUT_SEC` | `120` | OpenClaw 응답 타임아웃 |
+| `MAX_BODY_BYTES` | `32768` | `POST /ask` JSON 바디 최대 크기 (bytes) |
 | `SESSION_TIMEOUT_MIN` | `30` | 세션 만료 시간 (분) |
 | `TUNNEL_NAME` | (없음) | Named Tunnel 이름 (고정 URL용) |
 | `TUNNEL_HOSTNAME` | (없음) | Named Tunnel 커스텀 도메인 |
@@ -97,6 +103,9 @@ echo "TUNNEL_HOSTNAME=siri.yourdomain.com" >> .env
 # 3. 재시작
 ./start.sh
 ```
+
+`./setup-tunnel.sh`는 `~/.cloudflared/config-<tunnel-name>.yml`을 만들고,
+`./start.sh` / `siri-bridge.sh`는 그 파일을 자동으로 찾아 `cloudflared tunnel --config ... run`으로 실행합니다.
 
 ## Siri Shortcut 설치
 
@@ -165,10 +174,33 @@ node generate-shortcut.js
 }
 ```
 
+잘못된 JSON, 객체가 아닌 payload, 비어 있거나 문자열이 아닌 `message`는 `400`으로 거부됩니다.
+`MAX_BODY_BYTES`를 넘는 요청은 `413`을 반환합니다.
+
 ### GET /health
 
 ```json
 { "ok": true }
+```
+
+### GET /usage
+
+Protected endpoint for usage history and token totals.
+
+Pass the same `API_SECRET` used by `POST /ask` via either:
+
+- query string: `/usage?secret=...`
+- header: `X-API-Secret: ...`
+- header: `Authorization: Bearer ...`
+
+### GET /dashboard
+
+Protected HTML dashboard for the same usage data.
+
+Example:
+
+```text
+http://127.0.0.1:3456/dashboard?secret=YOUR_API_SECRET
 ```
 
 ## 문제 해결

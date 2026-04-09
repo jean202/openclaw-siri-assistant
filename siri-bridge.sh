@@ -41,19 +41,69 @@ OLD_TUNNEL_URL=$(cat "$TUNNEL_URL_FILE" 2>/dev/null || echo "")
 SERVER_PID=""
 TUNNEL_PID=""
 
+stop_server() {
+  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null
+  SERVER_PID=""
+}
+
+stop_tunnel() {
+  [ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null
+  TUNNEL_PID=""
+}
+
 cleanup() {
-  [ -n "$SERVER_PID" ] && kill $SERVER_PID 2>/dev/null
-  [ -n "$TUNNEL_PID" ] && kill $TUNNEL_PID 2>/dev/null
+  stop_server
+  stop_tunnel
   exit 0
 }
 trap cleanup INT TERM
 
+start_server() {
+  node "$DIR/server.js" >> "$LOG_FILE" 2>&1 &
+  SERVER_PID=$!
+  sleep 2
+
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    SERVER_PID=""
+    echo "[$(date)] ERROR: Server failed to start; not starting tunnel." >> "$LOG_FILE"
+    return 1
+  fi
+
+  echo "[$(date)] HTTP server started on port $PORT (PID: $SERVER_PID)" >> "$LOG_FILE"
+  return 0
+}
+
+resolve_tunnel_config() {
+  local named_config="$HOME/.cloudflared/config-${TUNNEL_NAME}.yml"
+  local default_config="$HOME/.cloudflared/config.yml"
+
+  if [ -f "$named_config" ]; then
+    echo "$named_config"
+  elif [ -f "$default_config" ]; then
+    echo "$default_config"
+  fi
+}
+
 start_tunnel() {
-  [ -n "$TUNNEL_PID" ] && kill $TUNNEL_PID 2>/dev/null
+  stop_tunnel
   > "$TUNNEL_LOG"
 
   if [ -n "$TUNNEL_NAME" ]; then
-    cloudflared tunnel run "$TUNNEL_NAME" > "$TUNNEL_LOG" 2>&1 &
+    local tunnel_config
+    tunnel_config="$(resolve_tunnel_config)"
+
+    if [ -n "$tunnel_config" ]; then
+      echo "[$(date)] Using named tunnel config: $tunnel_config" >> "$LOG_FILE"
+      cloudflared tunnel --config "$tunnel_config" run "$TUNNEL_NAME" > "$TUNNEL_LOG" 2>&1 &
+    else
+      if [ -n "$TUNNEL_HOSTNAME" ]; then
+        echo "[$(date)] ERROR: No cloudflared config file found for named tunnel '$TUNNEL_NAME'" >> "$LOG_FILE"
+        echo "[$(date)] Expected config: $HOME/.cloudflared/config-${TUNNEL_NAME}.yml" >> "$LOG_FILE"
+        return 1
+      fi
+      echo "[$(date)] Using cloudflared default config discovery for named tunnel '$TUNNEL_NAME'" >> "$LOG_FILE"
+      cloudflared tunnel run "$TUNNEL_NAME" > "$TUNNEL_LOG" 2>&1 &
+    fi
     TUNNEL_PID=$!
     echo "[$(date)] Named tunnel '$TUNNEL_NAME' started (PID: $TUNNEL_PID)" >> "$LOG_FILE"
 
@@ -98,9 +148,7 @@ regenerate_shortcut() {
 }
 
 # Start HTTP server
-node "$DIR/server.js" >> "$LOG_FILE" 2>&1 &
-SERVER_PID=$!
-sleep 2
+start_server || exit 1
 
 # Start cloudflared tunnel
 start_tunnel
@@ -113,20 +161,19 @@ notify() {
 
 # Monitor loop: restart processes if they die, notify on failure
 while true; do
-  if ! kill -0 $SERVER_PID 2>/dev/null; then
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     echo "[$(date)] Server process died, restarting..." >> "$LOG_FILE"
     notify "OpenClaw Siri Bridge" "Server crashed — restarting..."
-    node "$DIR/server.js" >> "$LOG_FILE" 2>&1 &
-    SERVER_PID=$!
-    sleep 2
-    if kill -0 $SERVER_PID 2>/dev/null; then
+    if start_server; then
       notify "OpenClaw Siri Bridge" "Server restarted successfully."
     else
-      notify "OpenClaw Siri Bridge" "Server failed to restart! Check logs."
+      notify "OpenClaw Siri Bridge" "Server failed to restart. Bridge is stopping."
+      stop_tunnel
+      exit 1
     fi
   fi
 
-  if ! kill -0 $TUNNEL_PID 2>/dev/null; then
+  if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
     echo "[$(date)] Tunnel process died, restarting..." >> "$LOG_FILE"
     notify "OpenClaw Siri Bridge" "Tunnel crashed — restarting..."
     sleep 3

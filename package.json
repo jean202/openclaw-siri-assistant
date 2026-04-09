@@ -6,7 +6,8 @@
   "scripts": {
     "start": "bash siri-bridge.sh",
     "server": "node server.js",
-    "url": "bash check-url.sh"
+    "url": "bash check-url.sh",
+    "test": "node --test test/*.test.js"
   },
   "keywords": [],
   "author": "",

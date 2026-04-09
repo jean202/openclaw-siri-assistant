@@ -24,6 +24,7 @@ const PORT = process.env.PORT || 3456;
 const API_SECRET = process.env.API_SECRET || crypto.randomBytes(24).toString("hex");
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "openclaw";
 const TIMEOUT_SEC = Number(process.env.TIMEOUT_SEC) || 120;
+const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES) || 32 * 1024;
 const SYSTEM_PROMPT =
   process.env.SYSTEM_PROMPT ||
   "You are a helpful personal AI assistant called via Siri. " +
@@ -127,13 +128,100 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // --- Helpers ---
-function readBody(req) {
+function createRequestError(status, message, reply) {
+  const error = new Error(message);
+  error.status = status;
+  error.reply = reply;
+  return error;
+}
+
+function readBody(req, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
+    const contentLength = Number(req.headers["content-length"]);
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      req.resume();
+      return reject(createRequestError(413, `Request body exceeds ${maxBytes} bytes`, "Your request is too long. Please try a shorter message."));
+    }
+
     const chunks = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
-    req.on("error", reject);
+    let totalBytes = 0;
+    let settled = false;
+
+    function cleanup() {
+      req.removeListener("data", onData);
+      req.removeListener("end", onEnd);
+      req.removeListener("error", onError);
+    }
+
+    function fail(error) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      req.resume();
+      reject(error);
+    }
+
+    function onData(chunk) {
+      totalBytes += chunk.length;
+      if (totalBytes > maxBytes) {
+        return fail(createRequestError(413, `Request body exceeds ${maxBytes} bytes`, "Your request is too long. Please try a shorter message."));
+      }
+      chunks.push(chunk);
+    }
+
+    function onEnd() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(Buffer.concat(chunks).toString());
+    }
+
+    function onError(error) {
+      fail(error);
+    }
+
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
   });
+}
+
+function parseJsonObject(rawBody) {
+  let body;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    throw createRequestError(400, "Request body must be valid JSON", "I couldn't understand the request. Please try again.");
+  }
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw createRequestError(400, "Request body must be a JSON object", "I couldn't understand the request. Please try again.");
+  }
+
+  return body;
+}
+
+function getMessageText(body) {
+  if (typeof body.message !== "string") {
+    throw createRequestError(400, "message must be a string", "No message received.");
+  }
+
+  const message = body.message.trim();
+  if (!message) {
+    throw createRequestError(400, "message is required", "No message received.");
+  }
+
+  return message;
+}
+
+function getDeviceId(body) {
+  const deviceId = typeof body.session_id === "string" && body.session_id.trim()
+    ? body.session_id.trim()
+    : typeof body.device_id === "string" && body.device_id.trim()
+      ? body.device_id.trim()
+      : "siri-default";
+
+  return deviceId.slice(0, 128);
 }
 
 function askOpenClaw(message, sessionId) {
@@ -179,32 +267,62 @@ function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+function getRequestUrl(req) {
+  return new URL(req.url, "http://127.0.0.1");
+}
+
+function getRequestSecret(req, requestUrl) {
+  const authHeader = req.headers.authorization || "";
+  if (authHeader.startsWith("Bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+
+  const headerSecret = req.headers["x-api-secret"];
+  if (typeof headerSecret === "string" && headerSecret.trim()) {
+    return headerSecret.trim();
+  }
+
+  return requestUrl.searchParams.get("secret")?.trim() || "";
+}
+
+function requireSecret(req, res, requestUrl) {
+  if (getRequestSecret(req, requestUrl) !== API_SECRET) {
+    return json(res, 401, { error: "Invalid secret" });
+  }
+  return true;
+}
+
 // --- Server ---
 const server = http.createServer(async (req, res) => {
+  const requestUrl = getRequestUrl(req);
+  const pathname = requestUrl.pathname;
+
   // Health check
-  if (req.method === "GET" && req.url === "/health") {
+  if (req.method === "GET" && pathname === "/health") {
     return json(res, 200, { ok: true });
   }
 
   // Usage API
-  if (req.method === "GET" && req.url === "/usage") {
+  if (req.method === "GET" && pathname === "/usage") {
+    if (requireSecret(req, res, requestUrl) !== true) return;
     const data = loadUsageData();
     const quota = await getCodexQuota();
     return json(res, 200, { ...data, codexQuota: quota });
   }
 
   // Usage dashboard
-  if (req.method === "GET" && req.url === "/dashboard") {
+  if (req.method === "GET" && pathname === "/dashboard") {
+    if (requireSecret(req, res, requestUrl) !== true) return;
     res.writeHead(200, { "Content-Type": "text/html" });
     return res.end(getDashboardHTML());
   }
 
   // Main endpoint: POST /ask
-  if (req.method === "POST" && req.url === "/ask") {
+  if (req.method === "POST" && pathname === "/ask") {
     const startTime = Date.now();
     let sessionId = "siri-default";
     try {
-      const body = JSON.parse(await readBody(req));
+      const body = parseJsonObject(await readBody(req));
 
       // Auth check
       if (body.secret !== API_SECRET) {
@@ -212,13 +330,8 @@ const server = http.createServer(async (req, res) => {
         return json(res, 401, { error: "Invalid secret", reply: "Authentication failed." });
       }
 
-      const message = body.message?.trim();
-      if (!message) {
-        log({ event: "bad_request", reason: "empty message", session_id: sessionId });
-        return json(res, 400, { error: "message is required", reply: "No message received." });
-      }
-
-      const deviceId = body.session_id || body.device_id || "siri-default";
+      const message = getMessageText(body);
+      const deviceId = getDeviceId(body);
       const session = getOrCreateSession(deviceId);
       sessionId = session.id;
       log({ event: "ask", device_id: deviceId, session_id: sessionId, message_count: session.messageCount, message_length: message.length });
@@ -230,6 +343,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { reply: result.text, session_id: sessionId });
     } catch (e) {
       const elapsed = Date.now() - startTime;
+      if (e.status) {
+        log({ event: "bad_request", session_id: sessionId, elapsed_ms: elapsed, status: e.status, error: e.message });
+        return json(res, e.status, { error: e.message, reply: e.reply });
+      }
       log({ event: "error", session_id: sessionId, elapsed_ms: elapsed, error: e.message });
       return json(res, 500, { error: e.message, reply: "An error occurred. Please try again." });
     }
@@ -315,12 +432,20 @@ function getDashboardHTML() {
 </div>
 
 <script>
+const dashboardSecret = new URLSearchParams(window.location.search).get('secret') || '';
+
 function fmt(n) { return n >= 1000 ? (n/1000).toFixed(1)+'k' : String(n); }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString('ko-KR', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '-'; }
 
 async function load() {
   try {
-    const r = await fetch('/usage');
+    const usageUrl = dashboardSecret ? '/usage?secret=' + encodeURIComponent(dashboardSecret) : '/usage';
+    const r = await fetch(usageUrl, {
+      headers: dashboardSecret ? { 'X-API-Secret': dashboardSecret } : {}
+    });
+    if (!r.ok) {
+      throw new Error(r.status === 401 ? 'Authentication failed' : 'HTTP ' + r.status);
+    }
     const d = await r.json();
     document.getElementById('loading').style.display = 'none';
     document.getElementById('app').style.display = '';
@@ -398,8 +523,8 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`\n🦞 OpenClaw Siri Bridge running on http://127.0.0.1:${PORT}`);
   console.log(`   POST /ask    — Send a message`);
   console.log(`   GET /health  — Health check`);
-  console.log(`   GET /usage   — Usage data (JSON)`);
-  console.log(`   GET /dashboard — Usage dashboard`);
+  console.log(`   GET /usage?secret=...   — Usage data (JSON, protected)`);
+  console.log(`   GET /dashboard?secret=... — Usage dashboard (protected)`);
   console.log(`\n🔑 API_SECRET: ${API_SECRET}`);
-  console.log(`   (set API_SECRET env var to use a fixed secret)\n`);
+  console.log(`   (also accepted as X-API-Secret or Bearer token)\n`);
 });

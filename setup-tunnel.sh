@@ -52,7 +52,8 @@ if [ -n "$HOSTNAME" ]; then
 
   # Write config
   mkdir -p "$HOME/.cloudflared"
-  cat > "$HOME/.cloudflared/config-${TUNNEL_NAME}.yml" <<YAML
+  CONFIG_FILE="$HOME/.cloudflared/config-${TUNNEL_NAME}.yml"
+  cat > "$CONFIG_FILE" <<YAML
 tunnel: $TUNNEL_ID
 credentials-file: $HOME/.cloudflared/${TUNNEL_ID}.json
 
@@ -61,6 +62,7 @@ ingress:
     service: http://localhost:$PORT
   - service: http_status:404
 YAML
+  echo "  Wrote config: $CONFIG_FILE"
 
   # Update .env
   echo ""
@@ -78,6 +80,7 @@ echo ""
 echo "Tunnel ID: $TUNNEL_ID"
 echo "Tunnel Name: $TUNNEL_NAME"
 [ -n "$HOSTNAME" ] && echo "Hostname: https://$HOSTNAME"
+[ -n "$HOSTNAME" ] && echo "Config File: $HOME/.cloudflared/config-${TUNNEL_NAME}.yml"
 echo ""
 echo "To use: Add these to your .env file:"
 echo "  TUNNEL_NAME=$TUNNEL_NAME"
