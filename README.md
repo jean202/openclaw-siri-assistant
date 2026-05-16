@@ -57,6 +57,7 @@ cp .env.example .env
 | `API_SECRET` | 자동 생성 | API 인증 키 (.secret에 저장) |
 | `TIMEOUT_SEC` | `120` | OpenClaw 응답 타임아웃 |
 | `MAX_BODY_BYTES` | `32768` | `POST /ask` JSON 바디 최대 크기 (bytes) |
+| `CLOUDFLARED_PROTOCOL` | `http2` | 임시 터널 전송 프로토콜 |
 | `SESSION_TIMEOUT_MIN` | `30` | 세션 만료 시간 (분) |
 | `TUNNEL_NAME` | (없음) | Named Tunnel 이름 (고정 URL용) |
 | `TUNNEL_HOSTNAME` | (없음) | Named Tunnel 커스텀 도메인 |

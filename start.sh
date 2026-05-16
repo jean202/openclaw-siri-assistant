@@ -24,6 +24,7 @@ done
 export PORT="${PORT:-3456}"
 export API_SECRET="${API_SECRET:-$(cat .secret 2>/dev/null || openssl rand -hex 24)}"
 export TIMEOUT_SEC="${TIMEOUT_SEC:-120}"
+export CLOUDFLARED_PROTOCOL="${CLOUDFLARED_PROTOCOL:-http2}"
 
 # Save secret for reuse
 echo "$API_SECRET" > .secret
@@ -132,7 +133,8 @@ start_tunnel() {
   else
     # Ephemeral tunnel — random URL
     echo "  Mode: Ephemeral tunnel (URL changes on restart)"
-    cloudflared tunnel --url http://127.0.0.1:$PORT > "$TUNNEL_LOG" 2>&1 &
+    echo "  Protocol: $CLOUDFLARED_PROTOCOL"
+    cloudflared tunnel --protocol "$CLOUDFLARED_PROTOCOL" --url http://127.0.0.1:$PORT > "$TUNNEL_LOG" 2>&1 &
     TUNNEL_PID=$!
 
     for i in $(seq 1 30); do

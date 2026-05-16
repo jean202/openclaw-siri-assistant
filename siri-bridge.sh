@@ -25,6 +25,7 @@ done
 export PORT="${PORT:-3456}"
 export API_SECRET="${API_SECRET:-$(cat .secret 2>/dev/null)}"
 export TIMEOUT_SEC="${TIMEOUT_SEC:-120}"
+export CLOUDFLARED_PROTOCOL="${CLOUDFLARED_PROTOCOL:-http2}"
 
 if [ -z "$API_SECRET" ]; then
   echo "[$(date)] ERROR: No API_SECRET set and .secret file not found" >> "$LOG_EARLY"
@@ -120,9 +121,9 @@ start_tunnel() {
       sleep 1
     done
   else
-    cloudflared tunnel --url http://127.0.0.1:$PORT > "$TUNNEL_LOG" 2>&1 &
+    cloudflared tunnel --protocol "$CLOUDFLARED_PROTOCOL" --url http://127.0.0.1:$PORT > "$TUNNEL_LOG" 2>&1 &
     TUNNEL_PID=$!
-    echo "[$(date)] Ephemeral tunnel started (PID: $TUNNEL_PID)" >> "$LOG_FILE"
+    echo "[$(date)] Ephemeral tunnel started with protocol $CLOUDFLARED_PROTOCOL (PID: $TUNNEL_PID)" >> "$LOG_FILE"
 
     for i in $(seq 1 30); do
       URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1)

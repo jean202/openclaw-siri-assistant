@@ -141,6 +141,7 @@ if [ "$1" = "models" ] && [ "$2" = "status" ]; then
   exit 0
 fi
 if [ "$1" = "agent" ]; then
+  echo "[plugins] stub warning" >&2
   printf '\\n{\\n  "payloads": [{"text": "Stub reply"}],\\n  "meta": {"agentMeta": {"usage": {"input": 1, "output": 2, "cacheRead": 0, "total": 3}, "model": "stub-model"}}\\n}\\n'
   exit 0
 fi

@@ -224,6 +224,33 @@ function getDeviceId(body) {
   return deviceId.slice(0, 128);
 }
 
+function parseAgentJson(output) {
+  if (!output) return null;
+
+  const candidates = [output.trim()];
+  const jsonBlockIdx = output.indexOf("\n{\n");
+  if (jsonBlockIdx !== -1) candidates.push(output.slice(jsonBlockIdx).trim());
+
+  for (const candidate of candidates) {
+    if (!candidate.startsWith("{")) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch {}
+  }
+
+  return null;
+}
+
+function formatAgentResult(result) {
+  const text = result.payloads?.map((p) => p.text).join("\n") || "No response";
+  const meta = result.meta?.agentMeta;
+  return {
+    text,
+    tokens: meta?.usage || null,
+    model: meta?.model || null,
+  };
+}
+
 function askOpenClaw(message, sessionId) {
   return new Promise((resolve, reject) => {
     const args = [
@@ -243,21 +270,12 @@ function askOpenClaw(message, sessionId) {
     };
 
     execFile(OPENCLAW_BIN, args, opts, (err, stdout, stderr) => {
-      const output = stderr || stdout || "";
+      const result = parseAgentJson(stdout) || parseAgentJson(stderr);
+      if (result) return resolve(formatAgentResult(result));
+
+      const output = [stdout, stderr].filter(Boolean).join("\n").trim();
       if (err && !output) return reject(new Error(err.message));
-      const idx = output.indexOf('\n{\n');
-      if (idx === -1) return resolve({ text: output.trim() || "No response", tokens: null, model: null });
-      const jsonStr = output.slice(idx).trim();
-      try {
-        const result = JSON.parse(jsonStr);
-        const text = result.payloads?.map((p) => p.text).join("\n") || "No response";
-        const meta = result.meta?.agentMeta;
-        const tokens = meta?.usage || null;
-        const model = meta?.model || null;
-        resolve({ text, tokens, model });
-      } catch {
-        resolve({ text: output.trim() || "No response", tokens: null, model: null });
-      }
+      resolve({ text: output || "No response", tokens: null, model: null });
     });
   });
 }
