@@ -413,7 +413,7 @@ function getDashboardHTML() {
   <div class="card"><div class="label">Today Requests (오늘 요청 수)</div><div class="value" id="todayReqs"></div></div>
   <div class="card"><div class="label">Today Tokens (오늘 토큰)</div><div class="value" id="todayTokens"></div></div>
   <div class="card"><div class="label">Avg Response (평균 응답 시간)</div><div class="value" id="avgTime"></div><div class="sub">ms (밀리초)</div></div>
-  <div class="card"><div class="label">Model (��용 중인 모델)</div><div class="value" id="model" style="font-size:1em"></div></div>
+  <div class="card"><div class="label">Model (사용 중인 모델)</div><div class="value" id="model" style="font-size:1em"></div></div>
 </div>
 
 <h2>Daily Token Usage (최근 14일 토큰 사용 추이)</h2>
@@ -458,7 +458,7 @@ async function load() {
     const totalReqs = Object.values(d.daily||{}).reduce((s,v)=>s+v.requests,0);
     document.getElementById('totalReqs').textContent = fmt(totalReqs);
     document.getElementById('totalTokens').textContent = fmt(t.total||0);
-    document.getElementById('tokenBreakdown').textContent = 'In(��낸): '+fmt(t.input||0)+' / Out(받은): '+fmt(t.output||0)+' / Cache(캐시): '+fmt(t.cacheRead||0);
+    document.getElementById('tokenBreakdown').textContent = 'In(보낸): '+fmt(t.input||0)+' / Out(받은): '+fmt(t.output||0)+' / Cache(캐시): '+fmt(t.cacheRead||0);
 
     // Today
     const today = new Date().toISOString().slice(0,10);
