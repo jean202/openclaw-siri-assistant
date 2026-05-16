@@ -6,7 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { execSync } = require("node:child_process");
+const { execFileSync, execSync } = require("node:child_process");
 
 const DIR = __dirname;
 
@@ -337,6 +337,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
 // --- Write and convert ---
 const xmlPath = path.join(DIR, "AskOpenClaw.plist");
 const shortcutPath = path.join(DIR, "AskOpenClaw.shortcut");
+const signedShortcutPath = path.join(DIR, "AskOpenClaw-signed.shortcut");
 
 fs.writeFileSync(xmlPath, plist, "utf8");
 
@@ -348,10 +349,33 @@ try {
   console.warn("plutil conversion failed, saved as XML plist (may still work)\n");
 }
 
+let signedShortcutGenerated = false;
+try {
+  execFileSync("shortcuts", [
+    "sign",
+    "--mode",
+    "anyone",
+    "--input",
+    shortcutPath,
+    "--output",
+    signedShortcutPath,
+  ]);
+  signedShortcutGenerated = true;
+} catch {
+  console.warn("Signing failed. Import the unsigned file only through a trusted Shortcuts sharing flow.\n");
+}
+
 console.log("Generated: AskOpenClaw.shortcut\n");
+if (signedShortcutGenerated) {
+  console.log("Generated signed import file: AskOpenClaw-signed.shortcut\n");
+}
 console.log("Transfer to iPhone:");
-console.log("  AirDrop  — Right-click file > Share > AirDrop");
-console.log("  iCloud   — Copy to iCloud Drive, tap on iPhone\n");
+if (signedShortcutGenerated) {
+  console.log("  Use AskOpenClaw-signed.shortcut for Google Drive, AirDrop, or Files app import");
+} else {
+  console.log("  Use an iCloud Shortcuts share link or create the shortcut manually");
+}
+console.log("");
 console.log(`Usage: "Hey Siri, Ask OpenClaw"\n`);
 console.log("Features:");
 console.log("  - Follow-up conversation (up to 20 turns per session)");
