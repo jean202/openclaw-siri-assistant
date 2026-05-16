@@ -232,22 +232,22 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
       </dict>
     </dict>
 
-    <!-- Speak error (reply is empty/missing) -->
+    <!-- Speak the reply -->
     <dict>
       <key>WFWorkflowActionIdentifier</key>
       <string>is.workflow.actions.speaktext</string>
       <key>WFWorkflowActionParameters</key>
       <dict>
-        <key>UUID</key>
-        <string>${speakErrorUUID}</string>
         <key>WFSpeakTextWait</key>
         <true/>
         <key>WFText</key>
-        ${textToken("Sorry, I couldn't get a response from the server. Please try again later.")}
+        ${textTokenWithVar("Dictionary Value", getValueUUID)}
+        <key>UUID</key>
+        <string>${speakReplyUUID}</string>
       </dict>
     </dict>
 
-    <!-- Otherwise (reply exists) — Speak reply -->
+    <!-- Otherwise (reply is empty/missing) -->
     <dict>
       <key>WFWorkflowActionIdentifier</key>
       <string>is.workflow.actions.conditional</string>
@@ -260,18 +260,18 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
       </dict>
     </dict>
 
-    <!-- Speak the reply -->
+    <!-- Speak error -->
     <dict>
       <key>WFWorkflowActionIdentifier</key>
       <string>is.workflow.actions.speaktext</string>
       <key>WFWorkflowActionParameters</key>
       <dict>
-        <key>UUID</key>
-        <string>${speakReplyUUID}</string>
         <key>WFSpeakTextWait</key>
         <true/>
         <key>WFText</key>
-        ${textTokenWithVar("Dictionary Value", getValueUUID)}
+        ${textToken("Sorry, I couldn't get a response from the server. Please try again later.")}
+        <key>UUID</key>
+        <string>${speakErrorUUID}</string>
       </dict>
     </dict>
 
@@ -336,16 +336,17 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
 
 // --- Write and convert ---
 const xmlPath = path.join(DIR, "AskOpenClaw.plist");
+const unsignedShortcutPath = path.join(DIR, "AskOpenClaw-unsigned.shortcut");
 const shortcutPath = path.join(DIR, "AskOpenClaw.shortcut");
-const signedShortcutPath = path.join(DIR, "AskOpenClaw-signed.shortcut");
+const legacySignedShortcutPath = path.join(DIR, "AskOpenClaw-signed.shortcut");
 
 fs.writeFileSync(xmlPath, plist, "utf8");
 
 try {
-  execSync(`plutil -convert binary1 -o "${shortcutPath}" "${xmlPath}"`);
+  execSync(`plutil -convert binary1 -o "${unsignedShortcutPath}" "${xmlPath}"`);
   fs.unlinkSync(xmlPath);
 } catch (e) {
-  fs.renameSync(xmlPath, shortcutPath);
+  fs.renameSync(xmlPath, unsignedShortcutPath);
   console.warn("plutil conversion failed, saved as XML plist (may still work)\n");
 }
 
@@ -356,22 +357,32 @@ try {
     "--mode",
     "anyone",
     "--input",
-    shortcutPath,
+    unsignedShortcutPath,
     "--output",
-    signedShortcutPath,
+    shortcutPath,
   ]);
   signedShortcutGenerated = true;
 } catch {
-  console.warn("Signing failed. Import the unsigned file only through a trusted Shortcuts sharing flow.\n");
+  fs.copyFileSync(unsignedShortcutPath, shortcutPath);
+  console.warn("Signing failed. AskOpenClaw.shortcut is unsigned and may not import on iOS.\n");
 }
 
-console.log("Generated: AskOpenClaw.shortcut\n");
+try {
+  fs.unlinkSync(legacySignedShortcutPath);
+} catch {}
+
+if (!signedShortcutGenerated) {
+  console.warn("Use an iCloud Shortcuts share link or create the shortcut manually.\n");
+}
+
+console.log("Generated: AskOpenClaw.shortcut");
+console.log("Generated source file: AskOpenClaw-unsigned.shortcut\n");
 if (signedShortcutGenerated) {
-  console.log("Generated signed import file: AskOpenClaw-signed.shortcut\n");
+  console.log("AskOpenClaw.shortcut is signed for iOS import.\n");
 }
 console.log("Transfer to iPhone:");
 if (signedShortcutGenerated) {
-  console.log("  Use AskOpenClaw-signed.shortcut for Google Drive, AirDrop, or Files app import");
+  console.log("  Use AskOpenClaw.shortcut for Google Drive, AirDrop, or Files app import");
 } else {
   console.log("  Use an iCloud Shortcuts share link or create the shortcut manually");
 }

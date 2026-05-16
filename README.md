@@ -112,7 +112,7 @@ echo "TUNNEL_HOSTNAME=siri.yourdomain.com" >> .env
 
 ### 자동 생성
 
-서버 시작 시 자동으로 `AskOpenClaw.shortcut`과 `AskOpenClaw-signed.shortcut`이 생성됩니다.
+서버 시작 시 자동으로 서명된 `AskOpenClaw.shortcut`과 원본 `AskOpenClaw-unsigned.shortcut`이 생성됩니다.
 수동으로 재생성하려면:
 
 ```bash
@@ -121,12 +121,13 @@ node generate-shortcut.js
 
 ### iPhone 전송 방법
 
-1. **Google Drive** — `AskOpenClaw-signed.shortcut` 업로드 후 iPhone Google Drive 앱에서 열기
-2. **AirDrop** — Finder에서 `AskOpenClaw-signed.shortcut` 파일을 AirDrop
+1. **Google Drive** — `AskOpenClaw.shortcut` 업로드 후 iPhone Google Drive 앱에서 열기
+2. **AirDrop** — Finder에서 `AskOpenClaw.shortcut` 파일을 AirDrop
 3. **iCloud Drive** — 파일을 iCloud Drive에 복사 후 iPhone에서 탭
 4. **이메일** — 첨부파일로 전송 후 iPhone에서 열기
 
-`AskOpenClaw.shortcut`은 원본 파일이고, iOS 파일 가져오기에 사용할 파일은 서명된 `AskOpenClaw-signed.shortcut`입니다.
+`AskOpenClaw.shortcut`은 iOS 파일 가져오기에 사용할 서명된 파일입니다.
+`AskOpenClaw-unsigned.shortcut`은 문제 분석용 원본 파일이며 iPhone으로 전송하지 않아도 됩니다.
 
 ### 사용법
 
