@@ -8,6 +8,11 @@ argument-hint: "[기능 설명 - 예: 새 Siri 단축어 커맨드 추가]"
 
 대상: **$ARGUMENTS**
 
+### Agent 지침 동기화
+- 이 저장소는 Claude와 Codex 지침을 함께 유지한다.
+- 한쪽 파일을 수정하면 같은 커밋에서 다른 쪽도 함께 갱신한다.
+- 대상 파일: `.claude/skills/siri-bridge/SKILL.md`, `.agents/skills/siri-bridge/SKILL.md`
+
 ### 프로젝트 구조
 - `server.js` — Express HTTP 서버 (OpenClaw 바이너리 연동)
 - `siri-bridge.sh` — cloudflared 터널 관리

@@ -153,6 +153,15 @@ node generate-shortcut.js
     └── siri-setup-guide.html
 ```
 
+## AI Agent 운영 방침
+
+이 저장소는 Claude와 Codex를 모두 사용합니다.
+
+- Claude용 지침은 `.claude/skills/siri-bridge/SKILL.md`에 둡니다.
+- Codex용 지침은 `.agents/skills/siri-bridge/SKILL.md`에 둡니다.
+- 두 파일은 같은 작업 흐름을 설명해야 하며, 한쪽을 수정하면 같은 커밋에서 다른 쪽도 함께 갱신합니다.
+- 시크릿, 로그, 런타임 상태, 로컬 캐시는 커밋하지 않습니다.
+
 ## API
 
 ### POST /ask
