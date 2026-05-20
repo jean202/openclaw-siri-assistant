@@ -6,7 +6,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { once } = require("node:events");
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 
 const repoDir = path.resolve(__dirname, "..");
 
@@ -124,7 +124,7 @@ function copyFiles(destinationDir, files) {
   }
 }
 
-async function startServerFixture(t) {
+async function startServerFixture(t, extraEnv = {}) {
   const fixtureDir = makeTempDir("openclaw-server-smoke-");
   const stubDir = path.join(fixtureDir, "bin");
   const stubOpenClaw = path.join(stubDir, "openclaw");
@@ -141,6 +141,10 @@ if [ "$1" = "models" ] && [ "$2" = "status" ]; then
   exit 0
 fi
 if [ "$1" = "agent" ]; then
+  if [[ "$*" == *"playable Apple Music query"* ]]; then
+    printf '\\n{\\n  "payloads": [{"text": "{\\\\"intent\\\\":\\\\"play\\\\",\\\\"query\\\\":\\\\"ETA\\\\",\\\\"reply\\\\":\\\\"ETA 재생할게요.\\\\"}"}],\\n  "meta": {"agentMeta": {"usage": {"input": 4, "output": 5, "cacheRead": 0, "total": 9}, "model": "stub-model"}}\\n}\\n'
+    exit 0
+  fi
   echo "[plugins] stub warning" >&2
   printf '\\n{\\n  "payloads": [{"text": "Stub reply"}],\\n  "meta": {"agentMeta": {"usage": {"input": 1, "output": 2, "cacheRead": 0, "total": 3}, "model": "stub-model"}}\\n}\\n'
   exit 0
@@ -159,6 +163,7 @@ exit 1
       API_SECRET: "test-secret",
       OPENCLAW_BIN: stubOpenClaw,
       MAX_BODY_BYTES: "128",
+      ...extraEnv,
     },
   });
 
@@ -267,6 +272,57 @@ test("server smoke: auth, validation, and happy path", async (t) => {
   assert.equal(validAskRes.statusCode, 200, child.getOutput());
   assert.match(validAskRes.body, /Stub reply/);
   assert.match(validAskRes.body, /test-device-/);
+
+  const validMusic = JSON.stringify({
+    secret: "test-secret",
+    message: "play ETA",
+    session_id: "music-device",
+  });
+  const validMusicRes = await request({
+    port,
+    method: "POST",
+    pathname: "/music",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": String(Buffer.byteLength(validMusic)),
+    },
+    body: validMusic,
+  });
+  assert.equal(validMusicRes.statusCode, 200, child.getOutput());
+  const musicBody = JSON.parse(validMusicRes.body);
+  assert.equal(musicBody.service, "apple_music");
+  assert.equal(musicBody.action, "play_top_hit");
+  assert.equal(musicBody.can_autoplay, true);
+  assert.equal(musicBody.query, "ETA");
+  assert.equal(musicBody.source, "openclaw");
+  assert.match(musicBody.session_id, /music-device-/);
+});
+
+test("server music service preference can switch to Melon search", async (t) => {
+  const { port, child } = await startServerFixture(t, { MUSIC_SERVICE: "melon" });
+
+  const body = JSON.stringify({
+    secret: "test-secret",
+    message: "play ETA",
+    session_id: "music-device",
+  });
+  const res = await request({
+    port,
+    method: "POST",
+    pathname: "/music",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": String(Buffer.byteLength(body)),
+    },
+    body,
+  });
+
+  assert.equal(res.statusCode, 200, child.getOutput());
+  const musicBody = JSON.parse(res.body);
+  assert.equal(musicBody.service, "melon");
+  assert.equal(musicBody.action, "search_music");
+  assert.equal(musicBody.can_autoplay, false);
+  assert.match(musicBody.reason, /Melon/);
 });
 
 test("start.sh smoke: named tunnel uses config-specific file", async (t) => {
@@ -337,6 +393,61 @@ exit 0
     "run",
     "siri-assistant",
   ]);
+});
+
+test("generate-music-shortcut creates a shortcut wired to /music and Play Music", async (t) => {
+  const fixtureDir = makeTempDir("openclaw-music-shortcut-smoke-");
+  const stubDir = path.join(fixtureDir, "bin");
+
+  fs.mkdirSync(stubDir, { recursive: true });
+  copyFiles(fixtureDir, ["generate-music-shortcut.js"]);
+  fs.writeFileSync(path.join(fixtureDir, ".tunnel-url"), "https://siri.example\n");
+  fs.writeFileSync(path.join(fixtureDir, ".secret"), "test-secret\n");
+
+  writeExecutable(
+    path.join(stubDir, "shortcuts"),
+    `#!/bin/bash
+input=""
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --input) input="$2"; shift 2 ;;
+    --output) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cp "$input" "$output"
+`
+  );
+
+  const child = spawnWithOutput(process.execPath, ["generate-music-shortcut.js"], {
+    cwd: fixtureDir,
+    env: {
+      ...process.env,
+      PATH: `${stubDir}:${process.env.PATH}`,
+    },
+  });
+
+  const [exitCode] = await once(child, "exit");
+  t.after(() => {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  });
+
+  assert.equal(exitCode, 0, child.getOutput());
+  assert.equal(fs.existsSync(path.join(fixtureDir, "PlayOpenClawMusic.shortcut")), true);
+
+  const xml = execFileSync("plutil", [
+    "-convert",
+    "xml1",
+    "-o",
+    "-",
+    path.join(fixtureDir, "PlayOpenClawMusic-unsigned.shortcut"),
+  ], { encoding: "utf8" });
+
+  assert.match(xml, /https:\/\/siri\.example\/music/);
+  assert.match(xml, /<string>query<\/string>/);
+  assert.match(xml, /is\.workflow\.actions\.playmusic/);
+  assert.match(xml, /<key>WFInput<\/key>/);
 });
 
 test("siri-bridge.sh smoke: server startup failure stops before tunnel", async (t) => {

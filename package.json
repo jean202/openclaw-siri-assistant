@@ -7,6 +7,7 @@
     "start": "bash siri-bridge.sh",
     "server": "node server.js",
     "url": "bash check-url.sh",
+    "shortcut:music": "node generate-music-shortcut.js",
     "test": "node --test test/*.test.js"
   },
   "keywords": [],

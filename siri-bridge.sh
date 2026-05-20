@@ -142,8 +142,9 @@ start_tunnel() {
 regenerate_shortcut() {
   NEW_URL=$(cat "$TUNNEL_URL_FILE" 2>/dev/null || echo "")
   if [ -n "$NEW_URL" ] && [ "$NEW_URL" != "$OLD_TUNNEL_URL" ]; then
-    echo "[$(date)] Tunnel URL changed — regenerating shortcut..." >> "$LOG_FILE"
+    echo "[$(date)] Tunnel URL changed — regenerating shortcuts..." >> "$LOG_FILE"
     node "$DIR/generate-shortcut.js" >> "$LOG_FILE" 2>&1
+    node "$DIR/generate-music-shortcut.js" >> "$LOG_FILE" 2>&1
     OLD_TUNNEL_URL="$NEW_URL"
   fi
 }

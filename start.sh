@@ -155,10 +155,11 @@ regenerate_shortcut() {
   NEW_URL=$(cat "$TUNNEL_URL_FILE" 2>/dev/null || echo "")
   if [ -n "$NEW_URL" ] && [ "$NEW_URL" != "$OLD_TUNNEL_URL" ]; then
     echo ""
-    echo "[*] Tunnel URL changed — regenerating Siri Shortcut..."
+    echo "[*] Tunnel URL changed — regenerating Siri Shortcuts..."
     node "$DIR/generate-shortcut.js" 2>/dev/null
+    node "$DIR/generate-music-shortcut.js" 2>/dev/null
     OLD_TUNNEL_URL="$NEW_URL"
-    echo "    Done. Transfer AskOpenClaw.shortcut to iPhone."
+    echo "    Done. Transfer AskOpenClaw.shortcut and PlayOpenClawMusic.shortcut to iPhone."
   fi
 }
 

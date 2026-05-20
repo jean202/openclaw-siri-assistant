@@ -30,6 +30,15 @@ const SYSTEM_PROMPT =
   "You are a helpful personal AI assistant called via Siri. " +
     "Respond in the same language the user speaks. Be concise and practical. " +
     "Keep responses short enough to be read aloud (under 3-4 sentences unless asked for detail).";
+const MUSIC_SYSTEM_PROMPT =
+  process.env.MUSIC_SYSTEM_PROMPT ||
+  "You extract a playable Apple Music query from a Siri music request. " +
+    "Return JSON only with keys: intent, query, reply. " +
+    "intent must be play. query must be concise text that Apple Music can resolve as a top hit. " +
+    "Preserve artist names, song titles, playlist names, moods, and languages. " +
+    "Remove command filler like play, search, music, please, 틀어줘, 재생해줘, 들려줘. " +
+    "reply should be one short sentence in the user's language.";
+const MUSIC_SERVICE = normalizeMusicService(process.env.MUSIC_SERVICE || "apple_music");
 
 // --- Logging ---
 const LOG_DIR = path.join(__dirname, "logs");
@@ -97,6 +106,31 @@ function getCodexQuota() {
       resolve(match ? match[1].trim() : "unavailable");
     });
   });
+}
+
+function normalizeMusicService(value) {
+  const service = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (["melon", "멜론"].includes(service)) return "melon";
+  if (["apple", "apple_music", "music", "애플뮤직", "애플_뮤직"].includes(service)) return "apple_music";
+  return "apple_music";
+}
+
+function getMusicServiceCapabilities(service) {
+  if (service === "melon") {
+    return {
+      service: "melon",
+      action: "search_music",
+      can_autoplay: false,
+      reason: "Melon currently exposes only a music search Shortcut action on this iPhone.",
+    };
+  }
+
+  return {
+    service: "apple_music",
+    action: "play_top_hit",
+    can_autoplay: true,
+    reason: "",
+  };
 }
 
 // --- Session Management ---
@@ -251,7 +285,7 @@ function formatAgentResult(result) {
   };
 }
 
-function askOpenClaw(message, sessionId) {
+function askOpenClaw(message, sessionId, systemPrompt = SYSTEM_PROMPT) {
   return new Promise((resolve, reject) => {
     const args = [
       "agent",
@@ -259,7 +293,7 @@ function askOpenClaw(message, sessionId) {
       "--session-id",
       sessionId,
       "--message",
-      `[System: ${SYSTEM_PROMPT}]\n\nUser: ${message}`,
+      `[System: ${systemPrompt}]\n\nUser: ${message}`,
       "--json",
     ];
 
@@ -278,6 +312,92 @@ function askOpenClaw(message, sessionId) {
       resolve({ text: output || "No response", tokens: null, model: null });
     });
   });
+}
+
+function parseJsonFromText(text) {
+  if (!text) return null;
+
+  const trimmed = text.trim();
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidates = [
+    trimmed,
+    fenceMatch ? fenceMatch[1].trim() : "",
+  ];
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate || !candidate.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+
+  return null;
+}
+
+function sanitizeMusicQuery(value) {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim()
+    .slice(0, 200);
+}
+
+function fallbackMusicQuery(message) {
+  const cleaned = sanitizeMusicQuery(message)
+    .replace(/\b(hey\s+siri|siri|please|can you|could you|play|search|find|music|song|songs|track|tracks|apple music|melon)\b/gi, " ")
+    .replace(/시리야|헤이\s*시리|오픈클로|오픈클로에게|애플\s*뮤직에서|애플뮤직에서|멜론에서|음악|노래|곡|플레이리스트/g, " ")
+    .replace(/틀어\s*줘|틀어줘|재생\s*해\s*줘|재생해줘|들려\s*줘|들려줘|찾아\s*줘|찾아줘|검색\s*해\s*줘|검색해줘|좀/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return sanitizeMusicQuery(cleaned || message);
+}
+
+async function buildMusicCommand(message, sessionId) {
+  const fallbackQuery = fallbackMusicQuery(message);
+  const capabilities = getMusicServiceCapabilities(MUSIC_SERVICE);
+  let agentResult = null;
+
+  try {
+    agentResult = await askOpenClaw(message, `${sessionId}-music`, MUSIC_SYSTEM_PROMPT);
+    const parsed = parseJsonFromText(agentResult.text);
+    const query = sanitizeMusicQuery(parsed?.query || parsed?.search_query || parsed?.music || "");
+    if (query) {
+      return {
+        service: capabilities.service,
+        action: capabilities.action,
+        can_autoplay: capabilities.can_autoplay,
+        intent: "play",
+        query,
+        reply: sanitizeMusicQuery(parsed.reply) || `${query} 재생할게요.`,
+        reason: capabilities.reason,
+        source: "openclaw",
+        tokens: agentResult.tokens,
+        model: agentResult.model,
+      };
+    }
+  } catch {}
+
+  return {
+    service: capabilities.service,
+    action: capabilities.action,
+    can_autoplay: capabilities.can_autoplay,
+    intent: "play",
+    query: fallbackQuery,
+    reply: `${fallbackQuery} 재생할게요.`,
+    reason: capabilities.reason,
+    source: "fallback",
+    tokens: agentResult?.tokens || null,
+    model: agentResult?.model || null,
+  };
 }
 
 function json(res, status, data) {
@@ -366,6 +486,40 @@ const server = http.createServer(async (req, res) => {
         return json(res, e.status, { error: e.message, reply: e.reply });
       }
       log({ event: "error", session_id: sessionId, elapsed_ms: elapsed, error: e.message });
+      return json(res, 500, { error: e.message, reply: "An error occurred. Please try again." });
+    }
+  }
+
+  // Music endpoint: POST /music
+  if (req.method === "POST" && pathname === "/music") {
+    const startTime = Date.now();
+    let sessionId = "siri-default";
+    try {
+      const body = parseJsonObject(await readBody(req));
+
+      if (body.secret !== API_SECRET) {
+        log({ event: "auth_fail", route: "/music", session_id: sessionId });
+        return json(res, 401, { error: "Invalid secret", reply: "Authentication failed." });
+      }
+
+      const message = getMessageText(body);
+      const deviceId = getDeviceId(body);
+      const session = getOrCreateSession(deviceId);
+      sessionId = session.id;
+      log({ event: "music", device_id: deviceId, session_id: sessionId, message_count: session.messageCount, message_length: message.length });
+
+      const command = await buildMusicCommand(message, sessionId);
+      const elapsed = Date.now() - startTime;
+      log({ event: "music_reply", device_id: deviceId, session_id: sessionId, elapsed_ms: elapsed, query: command.query, source: command.source, tokens: command.tokens, model: command.model });
+      recordUsage({ ts: new Date().toISOString(), device_id: deviceId, session_id: sessionId, route: "/music", message_length: message.length, reply_length: command.query.length, elapsed_ms: elapsed, tokens: command.tokens, model: command.model });
+      return json(res, 200, { ...command, session_id: sessionId });
+    } catch (e) {
+      const elapsed = Date.now() - startTime;
+      if (e.status) {
+        log({ event: "bad_request", route: "/music", session_id: sessionId, elapsed_ms: elapsed, status: e.status, error: e.message });
+        return json(res, e.status, { error: e.message, reply: e.reply });
+      }
+      log({ event: "error", route: "/music", session_id: sessionId, elapsed_ms: elapsed, error: e.message });
       return json(res, 500, { error: e.message, reply: "An error occurred. Please try again." });
     }
   }
@@ -540,6 +694,7 @@ setInterval(load, 30000);
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`\n🦞 OpenClaw Siri Bridge running on http://127.0.0.1:${PORT}`);
   console.log(`   POST /ask    — Send a message`);
+  console.log(`   POST /music  — Convert a Siri music request into an Apple Music play query`);
   console.log(`   GET /health  — Health check`);
   console.log(`   GET /usage?secret=...   — Usage data (JSON, protected)`);
   console.log(`   GET /dashboard?secret=... — Usage dashboard (protected)`);

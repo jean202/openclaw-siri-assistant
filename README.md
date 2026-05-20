@@ -9,6 +9,8 @@ iPhone Siri → Shortcut → cloudflared 터널 → localhost:3456 → OpenClaw 
 ## 주요 기능
 
 - Siri 음성 입력/출력으로 OpenClaw 사용
+- Siri 음악 명령을 Apple Music 재생 검색어로 변환 (`POST /music`)
+- Apple Music 재생용 `PlayOpenClawMusic.shortcut` 생성
 - 대화 이어가기 (한 세션에서 최대 20턴 연속 대화)
 - 디바이스별 세션 자동 분리 + 30분 무활동 시 세션 리셋
 - 서버 에러 시 음성으로 안내
@@ -61,6 +63,8 @@ cp .env.example .env
 | `SESSION_TIMEOUT_MIN` | `30` | 세션 만료 시간 (분) |
 | `TUNNEL_NAME` | (없음) | Named Tunnel 이름 (고정 URL용) |
 | `TUNNEL_HOSTNAME` | (없음) | Named Tunnel 커스텀 도메인 |
+| `MUSIC_SYSTEM_PROMPT` | 기본 제공 | Siri 음악 명령을 Apple Music 검색어로 바꾸는 프롬프트 |
+| `MUSIC_SERVICE` | `apple_music` | `/music` 응답의 대상 서비스 (`apple_music`, `melon`) |
 
 ### macOS 자동 시작
 
@@ -112,11 +116,12 @@ echo "TUNNEL_HOSTNAME=siri.yourdomain.com" >> .env
 
 ### 자동 생성
 
-서버 시작 시 자동으로 서명된 `AskOpenClaw.shortcut`과 원본 `AskOpenClaw-unsigned.shortcut`이 생성됩니다.
+서버 시작 시 자동으로 서명된 `AskOpenClaw.shortcut`, `PlayOpenClawMusic.shortcut`과 원본 `*-unsigned.shortcut`이 생성됩니다.
 수동으로 재생성하려면:
 
 ```bash
 node generate-shortcut.js
+node generate-music-shortcut.js
 ```
 
 ### iPhone 전송 방법
@@ -126,12 +131,13 @@ node generate-shortcut.js
 3. **iCloud Drive** — 파일을 iCloud Drive에 복사 후 iPhone에서 탭
 4. **이메일** — 첨부파일로 전송 후 iPhone에서 열기
 
-`AskOpenClaw.shortcut`은 iOS 파일 가져오기에 사용할 서명된 파일입니다.
-`AskOpenClaw-unsigned.shortcut`은 문제 분석용 원본 파일이며 iPhone으로 전송하지 않아도 됩니다.
+`AskOpenClaw.shortcut`과 `PlayOpenClawMusic.shortcut`은 iOS 파일 가져오기에 사용할 서명된 파일입니다.
+`*-unsigned.shortcut`은 문제 분석용 원본 파일이며 iPhone으로 전송하지 않아도 됩니다.
 
 ### 사용법
 
 - "Hey Siri, Ask OpenClaw" — 대화 시작
+- "Hey Siri, Play OpenClaw Music" — 음악 요청을 `/music`으로 정리한 뒤 Apple Music 재생
 - 질문하면 AI가 음성으로 답변
 - 이어서 추가 질문 가능 (최대 20턴)
 - Siri 취소하면 대화 종료
@@ -144,6 +150,7 @@ node generate-shortcut.js
 ├── start.sh               # 포그라운드 시작 스크립트
 ├── siri-bridge.sh          # 백그라운드 데몬 스크립트
 ├── generate-shortcut.js    # Siri Shortcut 파일 생성기
+├── generate-music-shortcut.js # Apple Music Shortcut 파일 생성기
 ├── install-launchagent.sh  # macOS LaunchAgent 설치/제거
 ├── setup-tunnel.sh         # Named Tunnel 설정 헬퍼
 ├── check-url.sh            # 현재 터널 URL/상태 확인
@@ -155,6 +162,7 @@ node generate-shortcut.js
 │   ├── requests.log        # API 요청 로그
 │   └── tunnel.log          # cloudflared 로그
 └── docs/
+    ├── iphone-music-shortcut.md
     └── siri-setup-guide.html
 ```
 
@@ -190,6 +198,40 @@ node generate-shortcut.js
 
 잘못된 JSON, 객체가 아닌 payload, 비어 있거나 문자열이 아닌 `message`는 `400`으로 거부됩니다.
 `MAX_BODY_BYTES`를 넘는 요청은 `413`을 반환합니다.
+
+### POST /music
+
+iPhone Shortcut의 Apple Music 재생 액션에 넘길 검색어를 만듭니다.
+
+```json
+{
+  "secret": "your-api-secret",
+  "message": "뉴진스 ETA 틀어줘",
+  "session_id": "my-iphone"
+}
+```
+
+응답:
+
+```json
+{
+  "service": "apple_music",
+  "action": "play_top_hit",
+  "can_autoplay": true,
+  "intent": "play",
+  "query": "뉴진스 ETA",
+  "reply": "뉴진스 ETA 재생할게요.",
+  "source": "openclaw",
+  "session_id": "my-iphone-m1abc2d3"
+}
+```
+
+`source`가 `fallback`이면 OpenClaw JSON 해석 대신 로컬 규칙으로 검색어를 정리했다는 뜻입니다.
+iPhone 쪽 연결 방법은 `docs/iphone-music-shortcut.md`를 참고하세요.
+
+Melon을 기본 서비스로 쓰려면 `.env`에 `MUSIC_SERVICE=melon`을 설정하고 브릿지를 재시작하세요.
+이 경우 `/music`은 `service: "melon"`, `action: "search_music"`, `can_autoplay: false`를 반환합니다.
+현재 iPhone에서 Melon이 `음악검색하기`만 제공한다면 자동 재생은 불가능하며, 단축어에서는 해당 검색 액션까지만 연결할 수 있습니다.
 
 ### GET /health
 
