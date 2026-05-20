@@ -450,6 +450,476 @@ cp "$input" "$output"
   assert.match(xml, /<key>WFInput<\/key>/);
 });
 
+// ---------------------------------------------------------------------------
+// Helper: start server with a fully custom openclaw stub script
+// ---------------------------------------------------------------------------
+async function startServerWithCustomStub(t, stubScript, extraEnv = {}) {
+  const fixtureDir = makeTempDir("openclaw-custom-smoke-");
+  const stubDir = path.join(fixtureDir, "bin");
+  const stubBin = path.join(stubDir, "openclaw");
+
+  fs.mkdirSync(stubDir, { recursive: true });
+  copyFiles(fixtureDir, ["server.js"]);
+  writeExecutable(stubBin, stubScript);
+
+  const port = await getFreePort();
+  const child = spawnWithOutput(process.execPath, ["server.js"], {
+    cwd: fixtureDir,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      API_SECRET: "test-secret",
+      OPENCLAW_BIN: stubBin,
+      ...extraEnv,
+    },
+  });
+
+  t.after(async () => {
+    await stopProcess(child);
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  });
+
+  await waitFor(async () => {
+    const res = await request({ port, pathname: "/health" });
+    return res.statusCode === 200;
+  });
+
+  return { port, child };
+}
+
+// Convenience: POST a JSON body and get the response
+async function postJson(port, pathname, body) {
+  const raw = JSON.stringify(body);
+  return request({
+    port,
+    method: "POST",
+    pathname,
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": String(Buffer.byteLength(raw)),
+    },
+    body: raw,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// GET /health — explicit
+// ---------------------------------------------------------------------------
+
+test("GET /health returns {ok: true}", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await request({ port, pathname: "/health" });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(JSON.parse(res.body), { ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Routing — 404 for unknown paths and wrong methods
+// ---------------------------------------------------------------------------
+
+test("unknown routes return 404", async (t) => {
+  const { port } = await startServerFixture(t);
+
+  const unknownGet = await request({ port, pathname: "/unknown" });
+  assert.equal(unknownGet.statusCode, 404);
+
+  const unknownPost = await postJson(port, "/foo", {});
+  assert.equal(unknownPost.statusCode, 404);
+
+  // GET /ask is not a supported method — should 404
+  const getAsk = await request({ port, pathname: "/ask" });
+  assert.equal(getAsk.statusCode, 404);
+});
+
+// ---------------------------------------------------------------------------
+// POST /ask — auth and validation edge cases
+// ---------------------------------------------------------------------------
+
+test("POST /ask rejects wrong secret with 401 and voice reply", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await postJson(port, "/ask", { secret: "bad", message: "hello" });
+  assert.equal(res.statusCode, 401);
+  assert.equal(JSON.parse(res.body).reply, "Authentication failed.");
+});
+
+test("POST /ask rejects missing message field with 400", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await postJson(port, "/ask", { secret: "test-secret" });
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body, /No message received/);
+});
+
+test("POST /ask rejects whitespace-only message with 400", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await postJson(port, "/ask", { secret: "test-secret", message: "   " });
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body, /No message received/);
+});
+
+// ---------------------------------------------------------------------------
+// POST /ask — session management
+// ---------------------------------------------------------------------------
+
+test("POST /ask same device reuses session_id within timeout", async (t) => {
+  const { port } = await startServerFixture(t, { SESSION_TIMEOUT_MIN: "60" });
+  const body = { secret: "test-secret", message: "hi", session_id: "my-iphone" };
+  const r1 = await postJson(port, "/ask", body);
+  const r2 = await postJson(port, "/ask", body);
+  assert.equal(r1.statusCode, 200);
+  assert.equal(r2.statusCode, 200);
+  assert.equal(JSON.parse(r1.body).session_id, JSON.parse(r2.body).session_id);
+});
+
+test("POST /ask creates a new session_id after timeout expires", async (t) => {
+  // 0.001 min = 60 ms timeout. Wait 100 ms between requests to guarantee expiry.
+  // (SESSION_TIMEOUT_MIN=0 doesn't work because Number("0") || 30 = 30.)
+  const { port } = await startServerFixture(t, { SESSION_TIMEOUT_MIN: "0.001" });
+  const body = { secret: "test-secret", message: "hi", session_id: "my-iphone" };
+  const r1 = await postJson(port, "/ask", body);
+  await wait(100);
+  const r2 = await postJson(port, "/ask", body);
+  assert.equal(r1.statusCode, 200);
+  assert.equal(r2.statusCode, 200);
+  assert.notEqual(JSON.parse(r1.body).session_id, JSON.parse(r2.body).session_id);
+});
+
+test("POST /ask uses device_id field when session_id is absent", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await postJson(port, "/ask", { secret: "test-secret", message: "hi", device_id: "my-mac" });
+  assert.equal(res.statusCode, 200);
+  assert.match(JSON.parse(res.body).session_id, /^my-mac-/);
+});
+
+test("POST /ask returns 500 with voice reply when OpenClaw crashes", async (t) => {
+  const { port } = await startServerWithCustomStub(
+    t,
+    `#!/bin/bash\nif [ "$1" = "models" ]; then exit 0; fi\nexit 1`
+  );
+  const res = await postJson(port, "/ask", { secret: "test-secret", message: "hi" });
+  assert.equal(res.statusCode, 500);
+  const body = JSON.parse(res.body);
+  assert.ok(typeof body.reply === "string" && body.reply.length > 0);
+});
+
+// ---------------------------------------------------------------------------
+// GET /usage and /dashboard — Authorization: Bearer header
+// ---------------------------------------------------------------------------
+
+test("GET /usage accepts Authorization Bearer token", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await request({
+    port,
+    pathname: "/usage",
+    headers: { Authorization: "Bearer test-secret" },
+  });
+  assert.equal(res.statusCode, 200);
+});
+
+test("GET /dashboard accepts Authorization Bearer token", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await request({
+    port,
+    pathname: "/dashboard",
+    headers: { Authorization: "Bearer test-secret" },
+  });
+  assert.equal(res.statusCode, 200);
+  assert.match(res.body, /Usage Dashboard/);
+});
+
+// ---------------------------------------------------------------------------
+// POST /music — auth and validation edge cases
+// ---------------------------------------------------------------------------
+
+test("POST /music rejects wrong secret with 401 and voice reply", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await postJson(port, "/music", { secret: "bad", message: "play something" });
+  assert.equal(res.statusCode, 401);
+  assert.equal(JSON.parse(res.body).reply, "Authentication failed.");
+});
+
+test("POST /music rejects missing message with 400", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await postJson(port, "/music", { secret: "test-secret" });
+  assert.equal(res.statusCode, 400);
+});
+
+test("POST /music rejects empty message with 400", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await postJson(port, "/music", { secret: "test-secret", message: "" });
+  assert.equal(res.statusCode, 400);
+});
+
+test("POST /music rejects oversized body with 413", async (t) => {
+  const { port } = await startServerFixture(t);
+  const res = await postJson(port, "/music", {
+    secret: "test-secret",
+    message: "x".repeat(200),
+  });
+  assert.equal(res.statusCode, 413);
+});
+
+// ---------------------------------------------------------------------------
+// POST /music — OpenClaw failure falls back to local query parser
+// ---------------------------------------------------------------------------
+
+test("POST /music falls back with stripped Korean filler when agent crashes", async (t) => {
+  const { port } = await startServerWithCustomStub(
+    t,
+    `#!/bin/bash\nif [ "$1" = "models" ]; then exit 0; fi\nexit 1`
+  );
+  const res = await postJson(port, "/music", {
+    secret: "test-secret",
+    message: "뉴진스 ETA 틀어줘",
+    session_id: "dev",
+  });
+  assert.equal(res.statusCode, 200);
+  const body = JSON.parse(res.body);
+  assert.equal(body.source, "fallback");
+  assert.equal(body.service, "apple_music");
+  assert.doesNotMatch(body.query, /틀어줘/);
+  assert.match(body.query, /ETA/);
+});
+
+test("POST /music falls back when agent returns plain text instead of JSON", async (t) => {
+  const stub = `#!/bin/bash
+if [ "$1" = "models" ]; then echo "openai-codex usage: stub quota"; exit 0; fi
+if [ "$1" = "agent" ]; then
+  printf '\\n{\\n  "payloads": [{"text": "Sure thing, I will play that music for you!"}],\\n  "meta": {"agentMeta": {"usage": {"input": 1, "output": 2, "cacheRead": 0, "total": 3}, "model": "stub-model"}}\\n}\\n'
+  exit 0
+fi
+exit 1`;
+  const { port } = await startServerWithCustomStub(t, stub);
+  const res = await postJson(port, "/music", {
+    secret: "test-secret",
+    message: "play something relaxing",
+    session_id: "dev",
+  });
+  assert.equal(res.statusCode, 200);
+  const body = JSON.parse(res.body);
+  assert.equal(body.source, "fallback");
+  assert.ok(body.query.length > 0);
+});
+
+// ---------------------------------------------------------------------------
+// POST /music — MUSIC_SERVICE normalization
+// ---------------------------------------------------------------------------
+
+test("POST /music normalizes 애플뮤직 → apple_music", async (t) => {
+  const { port } = await startServerFixture(t, { MUSIC_SERVICE: "애플뮤직" });
+  const res = await postJson(port, "/music", {
+    secret: "test-secret",
+    message: "play BTS",
+    session_id: "dev",
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(JSON.parse(res.body).service, "apple_music");
+});
+
+test("POST /music normalizes 멜론 → melon", async (t) => {
+  const { port } = await startServerFixture(t, { MUSIC_SERVICE: "멜론" });
+  const res = await postJson(port, "/music", {
+    secret: "test-secret",
+    message: "play BTS",
+    session_id: "dev",
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(JSON.parse(res.body).service, "melon");
+});
+
+test("POST /music defaults to apple_music for unknown MUSIC_SERVICE value", async (t) => {
+  const { port } = await startServerFixture(t, { MUSIC_SERVICE: "spotify" });
+  const res = await postJson(port, "/music", {
+    secret: "test-secret",
+    message: "play BTS",
+    session_id: "dev",
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(JSON.parse(res.body).service, "apple_music");
+});
+
+// ---------------------------------------------------------------------------
+// generate-shortcut.js — content and error handling
+// ---------------------------------------------------------------------------
+
+test("generate-shortcut creates AskOpenClaw.shortcut with /ask URL and secret embedded", async (t) => {
+  const fixtureDir = makeTempDir("openclaw-ask-shortcut-smoke-");
+  const stubDir = path.join(fixtureDir, "bin");
+
+  fs.mkdirSync(stubDir, { recursive: true });
+  copyFiles(fixtureDir, ["generate-shortcut.js"]);
+  fs.writeFileSync(path.join(fixtureDir, ".tunnel-url"), "https://siri.example\n");
+  fs.writeFileSync(path.join(fixtureDir, ".secret"), "my-test-secret\n");
+
+  writeExecutable(
+    path.join(stubDir, "shortcuts"),
+    `#!/bin/bash
+input=""; output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in --input) input="$2"; shift 2;; --output) output="$2"; shift 2;; *) shift;; esac
+done
+cp "$input" "$output"`
+  );
+
+  const child = spawnWithOutput(process.execPath, ["generate-shortcut.js"], {
+    cwd: fixtureDir,
+    env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` },
+  });
+  const [exitCode] = await once(child, "exit");
+  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+
+  assert.equal(exitCode, 0, child.getOutput());
+  assert.ok(fs.existsSync(path.join(fixtureDir, "AskOpenClaw.shortcut")));
+
+  const xml = execFileSync(
+    "plutil",
+    ["-convert", "xml1", "-o", "-", path.join(fixtureDir, "AskOpenClaw-unsigned.shortcut")],
+    { encoding: "utf8" }
+  );
+
+  assert.match(xml, /https:\/\/siri\.example\/ask/);
+  assert.match(xml, /my-test-secret/);
+  assert.match(xml, /<string>session_id<\/string>/);
+  assert.match(xml, /is\.workflow\.actions\.ask/);
+  assert.match(xml, /is\.workflow\.actions\.speaktext/);
+});
+
+test("generate-shortcut exits 1 with error when .tunnel-url is missing", async (t) => {
+  const fixtureDir = makeTempDir("openclaw-shortcut-nourl-smoke-");
+  fs.mkdirSync(fixtureDir, { recursive: true });
+  copyFiles(fixtureDir, ["generate-shortcut.js"]);
+  fs.writeFileSync(path.join(fixtureDir, ".secret"), "test-secret\n");
+
+  const child = spawnWithOutput(process.execPath, ["generate-shortcut.js"], { cwd: fixtureDir });
+  const [exitCode] = await once(child, "exit");
+  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+
+  assert.equal(exitCode, 1);
+  assert.match(child.getOutput(), /\.tunnel-url/);
+});
+
+test("generate-shortcut exits 1 with error when .secret is missing", async (t) => {
+  const fixtureDir = makeTempDir("openclaw-shortcut-nosecret-smoke-");
+  fs.mkdirSync(fixtureDir, { recursive: true });
+  copyFiles(fixtureDir, ["generate-shortcut.js"]);
+  fs.writeFileSync(path.join(fixtureDir, ".tunnel-url"), "https://siri.example\n");
+
+  const child = spawnWithOutput(process.execPath, ["generate-shortcut.js"], { cwd: fixtureDir });
+  const [exitCode] = await once(child, "exit");
+  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+
+  assert.equal(exitCode, 1);
+  assert.match(child.getOutput(), /\.secret/);
+});
+
+// ---------------------------------------------------------------------------
+// generate-music-shortcut.js — skips when MUSIC_SERVICE=melon
+// ---------------------------------------------------------------------------
+
+test("generate-music-shortcut skips file creation when MUSIC_SERVICE=melon", async (t) => {
+  const fixtureDir = makeTempDir("openclaw-music-melon-skip-smoke-");
+
+  fs.mkdirSync(fixtureDir, { recursive: true });
+  copyFiles(fixtureDir, ["generate-music-shortcut.js"]);
+  fs.writeFileSync(path.join(fixtureDir, ".tunnel-url"), "https://siri.example\n");
+  fs.writeFileSync(path.join(fixtureDir, ".secret"), "test-secret\n");
+  fs.writeFileSync(path.join(fixtureDir, ".env"), "MUSIC_SERVICE=melon\n");
+
+  const child = spawnWithOutput(process.execPath, ["generate-music-shortcut.js"], {
+    cwd: fixtureDir,
+  });
+  const [exitCode] = await once(child, "exit");
+  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+
+  assert.equal(exitCode, 0, child.getOutput());
+  assert.equal(fs.existsSync(path.join(fixtureDir, "PlayOpenClawMusic.shortcut")), false);
+  assert.match(child.getOutput(), /melon/i);
+});
+
+// ---------------------------------------------------------------------------
+// install-launchagent.sh — plist creation and uninstall
+// ---------------------------------------------------------------------------
+
+test("install-launchagent.sh writes plist with correct label and bridge script path", async (t) => {
+  const fixtureDir = makeTempDir("openclaw-launchagent-smoke-");
+  const stubDir = path.join(fixtureDir, "bin");
+  const launchAgentsDir = path.join(fixtureDir, "Library", "LaunchAgents");
+  const launchctlLog = path.join(fixtureDir, "launchctl.log");
+
+  fs.mkdirSync(stubDir, { recursive: true });
+  fs.mkdirSync(launchAgentsDir, { recursive: true });
+  copyFiles(fixtureDir, ["install-launchagent.sh", "siri-bridge.sh"]);
+  fs.writeFileSync(path.join(fixtureDir, ".secret"), "test-secret\n");
+
+  for (const cmd of ["node", "cloudflared", "openclaw"]) {
+    writeExecutable(path.join(stubDir, cmd), `#!/bin/bash\nexit 0`);
+  }
+  // sleep stub: exit immediately so install doesn't take 3 seconds
+  writeExecutable(path.join(stubDir, "sleep"), `#!/bin/bash\nexit 0`);
+  // launchctl stub: log calls; exit 0 for all so install sees RUNNING
+  writeExecutable(
+    path.join(stubDir, "launchctl"),
+    `#!/bin/bash\nprintf '%s\\n' "$*" >> "${launchctlLog}"\nexit 0`
+  );
+
+  const child = spawnWithOutput("/bin/bash", [path.join(fixtureDir, "install-launchagent.sh")], {
+    cwd: fixtureDir,
+    env: {
+      ...process.env,
+      PATH: `${stubDir}:${process.env.PATH}`,
+      HOME: fixtureDir,
+    },
+  });
+  const [exitCode] = await once(child, "exit");
+  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+
+  assert.equal(exitCode, 0, child.getOutput());
+
+  const plistPath = path.join(launchAgentsDir, "com.openclaw.siri-bridge.plist");
+  assert.ok(fs.existsSync(plistPath), "plist should be written");
+
+  const plistContent = fs.readFileSync(plistPath, "utf8");
+  assert.match(plistContent, /com\.openclaw\.siri-bridge/);
+  assert.match(plistContent, /siri-bridge\.sh/);
+  assert.match(plistContent, /<true\/>/); // RunAtLoad
+});
+
+test("install-launchagent.sh uninstall removes the plist", async (t) => {
+  const fixtureDir = makeTempDir("openclaw-launchagent-uninstall-smoke-");
+  const stubDir = path.join(fixtureDir, "bin");
+  const launchAgentsDir = path.join(fixtureDir, "Library", "LaunchAgents");
+  const plistPath = path.join(launchAgentsDir, "com.openclaw.siri-bridge.plist");
+
+  fs.mkdirSync(stubDir, { recursive: true });
+  fs.mkdirSync(launchAgentsDir, { recursive: true });
+  copyFiles(fixtureDir, ["install-launchagent.sh"]);
+  fs.writeFileSync(plistPath, "<plist>placeholder</plist>\n");
+
+  writeExecutable(path.join(stubDir, "launchctl"), `#!/bin/bash\nexit 0`);
+
+  const child = spawnWithOutput(
+    "/bin/bash",
+    [path.join(fixtureDir, "install-launchagent.sh"), "uninstall"],
+    {
+      cwd: fixtureDir,
+      env: {
+        ...process.env,
+        PATH: `${stubDir}:${process.env.PATH}`,
+        HOME: fixtureDir,
+      },
+    }
+  );
+  const [exitCode] = await once(child, "exit");
+  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+
+  assert.equal(exitCode, 0, child.getOutput());
+  assert.equal(fs.existsSync(plistPath), false, "plist should be removed after uninstall");
+  assert.match(child.getOutput(), /removed/i);
+});
+
+// ---------------------------------------------------------------------------
+// siri-bridge.sh smoke: server startup failure stops before tunnel
+// ---------------------------------------------------------------------------
+
 test("siri-bridge.sh smoke: server startup failure stops before tunnel", async (t) => {
   const fixtureDir = makeTempDir("openclaw-bridge-smoke-");
   const stubDir = path.join(fixtureDir, "bin");
