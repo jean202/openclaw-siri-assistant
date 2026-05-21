@@ -571,12 +571,11 @@ test("POST /ask same device reuses session_id within timeout", async (t) => {
 });
 
 test("POST /ask creates a new session_id after timeout expires", async (t) => {
-  // 0.001 min = 60 ms timeout. Wait 100 ms between requests to guarantee expiry.
-  // (SESSION_TIMEOUT_MIN=0 doesn't work because Number("0") || 30 = 30.)
-  const { port } = await startServerFixture(t, { SESSION_TIMEOUT_MIN: "0.001" });
+  // SESSION_TIMEOUT_MIN=0 → 0 ms timeout, so any elapsed time resets the session.
+  const { port } = await startServerFixture(t, { SESSION_TIMEOUT_MIN: "0" });
   const body = { secret: "test-secret", message: "hi", session_id: "my-iphone" };
   const r1 = await postJson(port, "/ask", body);
-  await wait(100);
+  await wait(10);
   const r2 = await postJson(port, "/ask", body);
   assert.equal(r1.statusCode, 200);
   assert.equal(r2.statusCode, 200);

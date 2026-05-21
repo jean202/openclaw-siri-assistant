@@ -134,7 +134,9 @@ function getMusicServiceCapabilities(service) {
 }
 
 // --- Session Management ---
-const SESSION_TIMEOUT_MIN = Number(process.env.SESSION_TIMEOUT_MIN) || 30;
+const SESSION_TIMEOUT_MIN = Number.isFinite(Number(process.env.SESSION_TIMEOUT_MIN))
+  ? Number(process.env.SESSION_TIMEOUT_MIN)
+  : 30;
 const sessions = new Map(); // sessionId -> { lastActive, messageCount }
 
 function getOrCreateSession(sessionId) {
